@@ -4,6 +4,8 @@
 #include <cmath>
 #include <complex>
 #include <cstddef>
+#include <string>
+#include <vector>
 
 namespace muisc {
 
@@ -39,7 +41,7 @@ struct EqPreset {
 };
 
 // The first entry is "Flat"; the preset cycle in the overlay walks this
-// table in order. Values stay inside +/-12 dB (kEqMinDb/kEqMaxDb).
+// table in order and then continues with the user's custom presets. Values stay inside +/-12 dB (kEqMinDb/kEqMaxDb).
 constexpr std::array<EqPreset, 12> kEqPresets = {{
     {"Flat",         {  0,  0,  0,  0,  0,  0,  0,  0,  0,  0}},
     {"Bass Boost",   {  6,  5,  4,  2,  1,  0,  0,  0,  0,  0}},
@@ -55,14 +57,52 @@ constexpr std::array<EqPreset, 12> kEqPresets = {{
     {"Loudness",     {  6,  4,  1,  0, -1, -1,  0,  1,  4,  5}},
 }};
 
-// Index of the preset whose gains match exactly, or -1 ("Custom").
+// User presets, created in the overlay (S) and stored in config.txt as
+// "EqualizerPreset=<ten gains>|<name>" lines. They follow the built-in
+// presets in the preset cycle, in the order they were saved.
+struct EqCustomPreset {
+    std::string name;
+    EqGains gains{};
+};
+
+constexpr size_t kEqMaxCustomPresets = 24; // keeps the preset cycle short enough to walk
+constexpr size_t kEqNameMaxBytes = 16;     // keeps "Preset: <name>   EQ: OFF   Preamp: -12.0 dB" inside the panel
+
+// True when every band matches (within a hundredth of a dB).
+inline bool eq_gains_equal(const EqGains& a, const EqGains& b) {
+    for (int i = 0; i < kEqBands; ++i) {
+        if (std::fabs(a[i] - b[i]) > 0.01f) return false;
+    }
+    return true;
+}
+
+// ASCII case-insensitive name comparison (preset names are matched without
+// regard to case, so "my rock" replaces "My Rock" instead of sitting next to it).
+inline bool eq_name_equal(const std::string& a, const std::string& b) {
+    if (a.size() != b.size()) return false;
+    for (size_t i = 0; i < a.size(); ++i) {
+        const unsigned char x = static_cast<unsigned char>(a[i]), y = static_cast<unsigned char>(b[i]);
+        const unsigned char lx = (x >= 'A' && x <= 'Z') ? static_cast<unsigned char>(x + 32) : x;
+        const unsigned char ly = (y >= 'A' && y <= 'Z') ? static_cast<unsigned char>(y + 32) : y;
+        if (lx != ly) return false;
+    }
+    return true;
+}
+
+// Is `name` taken by a built-in preset (or by the "Custom" label the overlay
+// shows for gains that match nothing)? Custom presets may not use these.
+inline bool eq_name_reserved(const std::string& name) {
+    if (eq_name_equal(name, "Custom")) return true;
+    for (const auto& p : kEqPresets) {
+        if (eq_name_equal(name, p.name)) return true;
+    }
+    return false;
+}
+
+// Index of the built-in preset whose gains match exactly, or -1 ("Custom").
 inline int eq_match_preset(const EqGains& g) {
     for (size_t p = 0; p < kEqPresets.size(); ++p) {
-        bool same = true;
-        for (int b = 0; b < kEqBands; ++b) {
-            if (std::fabs(kEqPresets[p].gains[b] - g[b]) > 0.01f) { same = false; break; }
-        }
-        if (same) return static_cast<int>(p);
+        if (eq_gains_equal(kEqPresets[p].gains, g)) return static_cast<int>(p);
     }
     return -1;
 }

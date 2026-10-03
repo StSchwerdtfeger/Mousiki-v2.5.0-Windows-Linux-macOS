@@ -1022,19 +1022,34 @@ private:
     // floating panel over the live playback UI. Ten vertical sliders
     // (31 Hz .. 16 kHz, +/-12 dB), a preset line and an on/off state. Left/
     // Right pick a band, Up/Down change it by 1 dB, ,/. (or TAB) step through
-    // the presets, E or SPACE switches the EQ on/off, R resets to Flat, ESC /
-    // Shift+E close and save. Touching a band or choosing a preset also turns
-    // the EQ on, so what you change is always what you hear. The values live in
-    // settings_.eq_enabled / eq_gains and reach the audio thread through
-    // Player::set_equalizer().
+    // the presets (the built-in ones first, then the user's own), E or SPACE
+    // switches the EQ on/off, R resets to Flat, ESC / Shift+E close and save.
+    // S saves the current curve as a custom preset (a name prompt takes over
+    // the row under the sliders until ENTER / ESC), DEL or X deletes the
+    // selected custom preset after a second press. Custom presets live in
+    // settings_.eq_custom_presets and are written to config.txt right away.
+    // Touching a band or choosing a preset also turns the EQ on, so what you
+    // change is always what you hear. The values live in settings_.eq_enabled
+    // / eq_gains and reach the audio thread through Player::set_equalizer().
     int eq_band_ = 0;                  // selected band 0..kEqBands-1
-    int eq_last_preset_ = 0;           // where the preset cycle continues from while the gains are Custom
+    int eq_last_preset_ = 0;           // unified preset index (built-ins, then custom): where the cycle continues from while the gains are Custom
+    bool eq_naming_ = false;           // the "Save as:" prompt is open
+    std::string eq_name_buf_;          // its text (edit_caret_/edit_anchor_ belong to it while open)
+    std::string eq_status_;            // one-line feedback under the sliders, cleared by the next key
+    bool eq_delete_armed_ = false;     // DEL / X pressed once on a custom preset: the next press deletes it
     static constexpr int kEqPanelWidth = 58;
     std::vector<std::string> build_eq_panel() const;
     void eq_open();
     void eq_apply();                   // pushes settings_ -> player_
     void eq_set_gain(int band, float db);
     void eq_select_preset(int dir);    // dir = +1 next, -1 previous
+    int eq_preset_count() const;                    // built-in presets + custom presets
+    const EqGains& eq_preset_gains(int index) const;
+    std::string eq_preset_name(int index) const;
+    int eq_current_preset() const;                  // unified index whose gains match the sliders, or -1 (Custom)
+    void eq_begin_naming();                         // S
+    void eq_commit_name();                          // ENTER in the prompt
+    void eq_delete_custom(bool confirmed);          // DEL / X
     void queue_move_hovering(int dir); // dir=-1 up, +1 down
     void clamp_queue_selected();
     void handle_key(int key);

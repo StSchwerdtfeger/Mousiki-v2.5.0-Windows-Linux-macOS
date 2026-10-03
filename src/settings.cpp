@@ -802,6 +802,36 @@ static Settings load_from_config(const fs::path& path) {
             if (ok && n == kEqBands) s.eq_gains = g;
             continue;
         }
+        if (key == "EqualizerPreset") {
+            // "<ten comma-separated gains>|<name>" -- one line per custom
+            // preset. The gains come first so the name may contain any
+            // character (a '|' included). A malformed line, an empty name,
+            // a name that a built-in preset already uses, a repeated name
+            // and anything past the limit are skipped, never half-applied.
+            const size_t bar = value.find('|');
+            if (bar == std::string::npos) continue;
+            const std::string gains_part = value.substr(0, bar);
+            std::string name = trim(value.substr(bar + 1));
+            if (name.empty() || eq_name_reserved(name)) continue;
+            if (s.eq_custom_presets.size() >= kEqMaxCustomPresets) continue;
+            bool dup = false;
+            for (const auto& cp : s.eq_custom_presets) if (eq_name_equal(cp.name, name)) { dup = true; break; }
+            if (dup) continue;
+            EqCustomPreset cp;
+            size_t pos = 0; int n = 0; bool ok = true;
+            while (pos <= gains_part.size() && n < kEqBands) {
+                size_t comma = gains_part.find(',', pos);
+                std::string tok = gains_part.substr(pos, comma == std::string::npos ? std::string::npos : comma - pos);
+                try { cp.gains[n++] = std::clamp(std::stof(tok), kEqMinDb, kEqMaxDb); } catch (...) { ok = false; break; }
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+            if (ok && n == kEqBands) {
+                cp.name = std::move(name);
+                s.eq_custom_presets.push_back(std::move(cp));
+            }
+            continue;
+        }
 
         // --- Autosave / session snapshot --------------------------------
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
@@ -1141,6 +1171,13 @@ void save_settings(const Settings& s) {
     out << "\n";
     out << "## Ten gains in dB (-12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz.\n";
     out << "## Easier to change with the overlay (Shift+E), which also has presets.\n";
+    for (const auto& cp : s.eq_custom_presets) {
+        out << "EqualizerPreset=";
+        for (int b = 0; b < kEqBands; ++b) out << (b ? "," : "") << cp.gains[b];
+        out << "|" << cp.name << "\n";
+    }
+    out << "## EqualizerPreset=<ten gains>|<name> is one custom preset (same band order as above), up to " << kEqMaxCustomPresets << ".\n";
+    out << "## Create and delete them in the overlay: S saves the current curve under a name, DEL/X deletes the selected one.\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";

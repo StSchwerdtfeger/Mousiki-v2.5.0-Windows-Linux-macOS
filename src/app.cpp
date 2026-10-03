@@ -3354,6 +3354,26 @@ void App::handle_key(int key) {
         // are ignored (the footer lists every key). ESC or the overlay hotkey
         // closes and saves.
         const bool arrow = last_key_was_arrow();
+
+        // The "Save as:" prompt owns every key until ENTER or ESC: typing,
+        // caret, marking and clipboard come from the shared single-line editor.
+        if (eq_naming_) {
+            if (!arrow && key == 27) { // cancel the prompt only, the overlay stays open
+                eq_naming_ = false;
+                eq_name_buf_.clear();
+                eq_status_ = "Save cancelled";
+                return;
+            }
+            if (!arrow && (key == '\r' || key == '\n')) { eq_commit_name(); return; }
+            edit_focus("eq-name", eq_name_buf_);
+            edit_text_key(eq_name_buf_, edit_caret_, edit_anchor_, key, kEqNameMaxBytes, nullptr);
+            return;
+        }
+
+        const bool delete_was_armed = eq_delete_armed_; // a second DEL / X right after the first confirms
+        eq_delete_armed_ = false;
+        eq_status_.clear();
+
         if (arrow && key == 'C') { eq_band_ = (eq_band_ + 1) % kEqBands; return; }               // right
         if (arrow && key == 'D') { eq_band_ = (eq_band_ + kEqBands - 1) % kEqBands; return; }    // left
         if (arrow && key == 'A') { eq_set_gain(eq_band_, settings_.eq_gains[eq_band_] + 1.0f); return; } // up
@@ -3375,7 +3395,13 @@ void App::handle_key(int key) {
         std::string eq_action = resolve_hotkey_action(key);
         if (eq_action.empty() && key >= 'a' && key <= 'z') eq_action = resolve_hotkey_action(key - 32);
         if (eq_action.empty() && key >= 'A' && key <= 'Z') eq_action = resolve_hotkey_action(key + 32);
-        if (!arrow && (key == 27 || eq_action == "HKeyEqualizer")) {
+        const bool eq_close_key = !arrow && (key == 27 || eq_action == "HKeyEqualizer");
+        if (!eq_close_key && !arrow && (key == 's' || key == 'S')) { eq_begin_naming(); return; }
+        if (!eq_close_key && !arrow && (key == kKeyDelete || key == 'x' || key == 'X')) {
+            eq_delete_custom(delete_was_armed);
+            return;
+        }
+        if (eq_close_key) {
             mode_ = Mode::Browse;
             save_settings(settings_);
         }
@@ -8047,11 +8073,13 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
         {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
         // --- Equalizer ---
-        {"EQUALIZER", "HKeyEqualizer", "Equalizer: 10 bands, presets, on/off"},
+        {"EQUALIZER", "HKeyEqualizer", "Equalizer: 10 bands, presets, custom presets, on/off"},
         {nullptr, "#LEFT / RIGHT", "Equalizer: select band"},
         {nullptr, "#UP / DOWN", "Equalizer: band gain +1 / -1 dB"},
-        {nullptr, "#, / . / TAB", "Equalizer: previous / next preset"},
+        {nullptr, "#, / . / TAB", "Equalizer: previous / next preset (built-in, then custom)"},
         {nullptr, "#SPACE / 0 / r", "Equalizer: on-off / zero the band / reset to Flat"},
+        {nullptr, "#s", "Equalizer: save the current curve as a custom preset (ENTER saves, ESC cancels)"},
+        {nullptr, "#DEL / x", "Equalizer: delete the selected custom preset (press twice)"},
         {nullptr, "#TAB / ENTER", "Top Tracks tab: switch pane / add top 10-25-50-100 to queue"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
@@ -8643,9 +8671,50 @@ void App::rl_submit() {
 }
 
 // Equaliser overlay (SHIFT+E).
+//
+// Presets are addressed by one "unified" index: 0 .. kEqPresets.size()-1 are
+// the built-in presets, everything after that is settings_.eq_custom_presets
+// in the order saved.
+int App::eq_preset_count() const {
+    return static_cast<int>(kEqPresets.size() + settings_.eq_custom_presets.size());
+}
+
+const EqGains& App::eq_preset_gains(int index) const {
+    const int builtin = static_cast<int>(kEqPresets.size());
+    if (index < builtin) return kEqPresets[std::clamp(index, 0, builtin - 1)].gains;
+    const int c = std::clamp(index - builtin, 0, static_cast<int>(settings_.eq_custom_presets.size()) - 1);
+    return settings_.eq_custom_presets[c].gains;
+}
+
+std::string App::eq_preset_name(int index) const {
+    const int builtin = static_cast<int>(kEqPresets.size());
+    if (index < builtin) return kEqPresets[std::clamp(index, 0, builtin - 1)].name;
+    const int c = index - builtin;
+    if (c < static_cast<int>(settings_.eq_custom_presets.size())) return settings_.eq_custom_presets[c].name;
+    return "Custom";
+}
+
+// The preset the sliders currently equal, or -1. The preset the cycle last
+// stopped on wins a tie, so a custom preset saved with the same curve as a
+// built-in one keeps showing under its own name.
+int App::eq_current_preset() const {
+    const int n = eq_preset_count();
+    const EqGains& g = settings_.eq_gains;
+    if (eq_last_preset_ >= 0 && eq_last_preset_ < n && eq_gains_equal(eq_preset_gains(eq_last_preset_), g))
+        return eq_last_preset_;
+    for (int i = 0; i < n; ++i) {
+        if (eq_gains_equal(eq_preset_gains(i), g)) return i;
+    }
+    return -1;
+}
+
 void App::eq_open() {
-    const int m = eq_match_preset(settings_.eq_gains);
+    const int m = eq_current_preset();
     if (m >= 0) eq_last_preset_ = m;
+    eq_naming_ = false;
+    eq_name_buf_.clear();
+    eq_status_.clear();
+    eq_delete_armed_ = false;
     mode_ = Mode::Equalizer;
 }
 
@@ -8663,14 +8732,105 @@ void App::eq_set_gain(int band, float db) {
 }
 
 void App::eq_select_preset(int dir) {
-    const int n = static_cast<int>(kEqPresets.size());
-    const int cur = eq_match_preset(settings_.eq_gains);
+    const int n = eq_preset_count();
+    const int cur = eq_current_preset();
     const int base = cur >= 0 ? cur : std::clamp(eq_last_preset_, 0, n - 1);
     const int next = ((base + dir) % n + n) % n;
-    settings_.eq_gains = kEqPresets[next].gains;
+    settings_.eq_gains = eq_preset_gains(next);
     settings_.eq_enabled = true;
     eq_last_preset_ = next;
     eq_apply();
+}
+
+// S: opens the "Save as:" prompt. When the sliders were moved away from a
+// custom preset the prompt starts with that preset's name, so ENTER alone
+// updates it; otherwise it starts empty.
+void App::eq_begin_naming() {
+    eq_name_buf_.clear();
+    const int builtin = static_cast<int>(kEqPresets.size());
+    if (eq_current_preset() < 0 && eq_last_preset_ >= builtin && eq_last_preset_ < eq_preset_count())
+        eq_name_buf_ = eq_preset_name(eq_last_preset_);
+    eq_naming_ = true;
+    edit_owner_ = "eq-name"; // claim the shared caret -- see edit_focus()
+    edit_caret_ = edit_anchor_ = eq_name_buf_.size();
+}
+
+// ENTER in the prompt: stores the current curve under the typed name. A name
+// that a custom preset already has (any capitalisation) replaces that preset;
+// built-in names and "Custom" are refused. The list is written to config.txt
+// at once, so a preset survives even if the program is closed abruptly.
+void App::eq_commit_name() {
+    std::string name;
+    for (char c : eq_name_buf_) {
+        const unsigned char u = static_cast<unsigned char>(c);
+        if (u < 32 || u == 127) continue;                   // control characters
+        name.push_back((c == '=' || c == '{' || c == '}') ? '-' : c); // would confuse the config parser
+    }
+    while (!name.empty() && name.front() == ' ') name.erase(name.begin());
+    while (!name.empty() && name.back() == ' ') name.pop_back();
+
+    if (name.empty()) {
+        eq_status_ = "Nothing saved: the name is empty";
+        eq_naming_ = false;
+        eq_name_buf_.clear();
+        return;
+    }
+    if (eq_name_reserved(name)) {
+        eq_status_ = "\"" + name + "\" is a built-in name, pick another";
+        eq_naming_ = false;
+        eq_name_buf_.clear();
+        return;
+    }
+
+    const int builtin = static_cast<int>(kEqPresets.size());
+    int existing = -1;
+    for (size_t i = 0; i < settings_.eq_custom_presets.size(); ++i) {
+        if (eq_name_equal(settings_.eq_custom_presets[i].name, name)) { existing = static_cast<int>(i); break; }
+    }
+    if (existing >= 0) {
+        settings_.eq_custom_presets[existing].name = name;
+        settings_.eq_custom_presets[existing].gains = settings_.eq_gains;
+        eq_last_preset_ = builtin + existing;
+        eq_status_ = "Updated \"" + name + "\"";
+    } else if (settings_.eq_custom_presets.size() >= kEqMaxCustomPresets) {
+        eq_status_ = "Limit of " + std::to_string(kEqMaxCustomPresets) + " custom presets reached";
+        eq_naming_ = false;
+        eq_name_buf_.clear();
+        return;
+    } else {
+        EqCustomPreset cp;
+        cp.name = name;
+        cp.gains = settings_.eq_gains;
+        settings_.eq_custom_presets.push_back(std::move(cp));
+        eq_last_preset_ = builtin + static_cast<int>(settings_.eq_custom_presets.size()) - 1;
+        eq_status_ = "Saved \"" + name + "\"";
+    }
+    eq_naming_ = false;
+    eq_name_buf_.clear();
+    save_settings(settings_);
+}
+
+// DEL / X: removes the custom preset the sliders currently equal. Built-in
+// presets cannot be deleted. The first press only asks; the second one, with
+// no other key in between, deletes. The sliders keep their gains (they simply
+// read "Custom" afterwards) and the cycle continues from the neighbour.
+void App::eq_delete_custom(bool confirmed) {
+    const int builtin = static_cast<int>(kEqPresets.size());
+    const int cur = eq_current_preset();
+    if (cur < builtin) {
+        eq_status_ = cur < 0 ? "Select a custom preset to delete it" : "Built-in presets cannot be deleted";
+        return;
+    }
+    const std::string name = eq_preset_name(cur);
+    if (!confirmed) {
+        eq_delete_armed_ = true;
+        eq_status_ = "Press DEL / X again to delete \"" + name + "\"";
+        return;
+    }
+    settings_.eq_custom_presets.erase(settings_.eq_custom_presets.begin() + (cur - builtin));
+    eq_last_preset_ = cur - 1;
+    eq_status_ = "Deleted \"" + name + "\"";
+    save_settings(settings_);
 }
 
 std::vector<std::string> App::build_eq_panel() const {
@@ -8692,15 +8852,41 @@ std::vector<std::string> App::build_eq_panel() const {
         return pad_right(std::string(left, ' ') + t, kCell);
     };
 
+    // Every legend line of this overlay -- the two rows under the sliders and
+    // the footer in the bottom border -- is drawn in the border colour, so the
+    // whole key legend reads as one block. (Other panels colour their legends
+    // differently; here this was chosen on purpose.)
+    const std::string legend = border_bottom;
+    // The legend rows are centred in the panel, and so is the footer in the
+    // bottom border (the dashes are split evenly on both sides of it).
+    auto legend_row = [&](const std::string& plain) {
+        const std::string t = truncate_str(plain, inner);
+        const int tw = display_width(t);
+        const int left = std::max(0, (inner - tw) / 2);
+        const std::string body = std::string(left, ' ') + t + std::string(std::max(0, inner - tw - left), ' ');
+        return bar + " " + (legend.empty() ? body : legend + body + R) + " " + bar;
+    };
+    auto legend_bottom = [&](const std::string& footer) {
+        const std::string t = " " + truncate_str(footer, W - 6) + " ";
+        const int dashes = std::max(0, W - 2 - display_width(t));
+        const int left = dashes / 2, right = dashes - left;
+        std::string out = settings_.box_lower_left;
+        for (int i = 0; i < left; ++i) out += settings_.box_horizontal;
+        out += t;
+        for (int i = 0; i < right; ++i) out += settings_.box_horizontal;
+        out += settings_.box_lower_right;
+        return legend.empty() ? out : legend + out + R;
+    };
+
     const EqGains& g = settings_.eq_gains;
     const bool on = settings_.eq_enabled;
-    const int preset = eq_match_preset(g);
+    const int preset = eq_current_preset();
     char pre[24];
     { const float pa = eq_auto_preamp_db(g); std::snprintf(pre, sizeof pre, pa > -0.05f ? "0.0 dB" : "%+.1f dB", pa); }
 
     std::vector<std::string> lines;
     lines.push_back(box_top("Equalizer", W, border));
-    lines.push_back(plain_row(std::string("Preset: ") + (preset >= 0 ? kEqPresets[preset].name : "Custom") +
+    lines.push_back(plain_row(std::string("Preset: ") + (preset >= 0 ? eq_preset_name(preset) : std::string("Custom")) +
                               "   EQ: " + (on ? "ON" : "OFF") + "   Preamp: " + pre));
 
     // Plot: 13 rows of 2 dB each, or 7 rows of 4 dB when the terminal is short.
@@ -8752,8 +8938,28 @@ std::vector<std::string> App::build_eq_panel() const {
     }
     lines.push_back(framed(vals));
     lines.push_back(framed(names));
-    lines.push_back(plain_row("[</>] band  [UP/DOWN] gain  [,/.] preset  [0] zero"));
-    lines.push_back(box_bottom(W, "[SPACE] on/off  [R] flat  [SHIFT+E / ESC] close", border_bottom));
+
+    // One row for the "Save as:" prompt or the last action's feedback. It is
+    // always present (blank when idle) so the panel keeps the same height.
+    if (eq_naming_) {
+        const std::string prefix = "Save as: ";
+        const EditPaint p = paint_edit_field(eq_name_buf_, edit_caret_, edit_anchor_,
+                                             std::max(1, inner - display_width(prefix) - 1), "", true);
+        const int fill = std::max(0, inner - display_width(prefix) - p.cols);
+        lines.push_back(framed(prefix + p.s + std::string(fill, ' ')));
+    } else {
+        lines.push_back(plain_row(eq_status_));
+    }
+
+    if (eq_naming_) {
+        lines.push_back(legend_row("Type a name (max " + std::to_string(kEqNameMaxBytes) + " characters)"));
+        lines.push_back(legend_row("An existing custom name is replaced"));
+        lines.push_back(legend_bottom("[ENTER] save  [ESC] cancel"));
+    } else {
+        lines.push_back(legend_row("[</>] band  [UP/DOWN] gain  [,/.] preset  [0] zero"));
+        lines.push_back(legend_row("[S] save preset  [DEL/X] delete preset"));
+        lines.push_back(legend_bottom("[SPACE] on/off  [R] flat  [SHIFT+E / ESC] close"));
+    }
     return lines;
 }
 

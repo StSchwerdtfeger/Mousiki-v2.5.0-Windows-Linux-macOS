@@ -189,12 +189,16 @@ struct Settings {
     double normalize_target_lufs = -16.0;   // -14 = YouTube/Spotify reference, -16 = a bit more headroom
     double normalize_max_boost_db = 9.0;    // never amplify a quiet track by more than this
 
-    // --- equaliser (config.txt: EqualizerEnabled / EqualizerBands) --------
+    // --- equaliser (config.txt: EqualizerEnabled / EqualizerBands / EqualizerPreset) ---
     // Ten band gains in dB (31 Hz .. 16 kHz, see equalizer.h), edited in the
     // Shift+E overlay. Which preset is "selected" is not stored: it is derived
-    // by matching the gains against the preset table (no match = Custom).
+    // by matching the gains against the preset table and the custom presets
+    // below (no match = Custom).
     bool   eq_enabled = false;
     EqGains eq_gains = {};
+    // The user's own presets (S in the overlay), one "EqualizerPreset=" line
+    // each. They come after the built-in presets in the preset cycle.
+    std::vector<EqCustomPreset> eq_custom_presets;
 
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;
