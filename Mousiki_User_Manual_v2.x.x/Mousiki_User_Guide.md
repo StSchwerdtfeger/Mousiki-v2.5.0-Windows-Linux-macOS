@@ -48,7 +48,7 @@ The main screen has a **local/online/playlist list** on the left (titled `LOCAL 
 
 ### Play mode letter
 
-The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` repeat queue.
+The small box next to the search bar shows the current play mode as a letter: `L` list, `R` repeat, `S` shuffle, `O` stop, `Q` queue then stop.
 
 ---
 
@@ -110,7 +110,7 @@ The main screen while a track plays: the disk, the metadata panel, the visualize
 
 ### Equalizer overlay (`SHIFT+E`)
 
-Opens a window in the middle of the screen with a **10-band graphic equalizer**. Each band is a vertical slider from **−12 dB** to **+12 dB**, with the center line at 0 dB. The bands sit at **31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz**. The selected band is highlighted, and its gain and name are shown underneath. The top line of the window shows the current **preset**, whether the **EQ is ON or OFF**, and the **preamp** (see below).
+Opens a window in the middle of the screen with a **10-band graphic equalizer**. Each band is a vertical slider from **−12 dB** to **+12 dB**, with the center line at 0 dB. The bands sit at **31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz**. The selected band is highlighted, and its gain and name are shown underneath. The top line of the window shows the current **preset**, whether the **EQ is ON or OFF**, and the **preamp** (see below). The key legend at the bottom of the window is drawn in the same color as the window's border.
 
 The equalizer works on everything the player plays and changes the sound **while the music plays**, so you can adjust it by ear. Playback keeps running while the overlay is open, but its keys are the only ones that react until you close it. The overlay opens on every main screen.
 
@@ -119,15 +119,17 @@ The equalizer works on everything the player plays and changes the sound **while
 | `←` / `→` | Select the previous / next band (wraps around) |
 | `↑` / `↓` | Raise / lower the selected band by 1 dB |
 | `,` or `<` | Previous preset |
-| `.` or `>` or `TAB` | Next preset |
+| `.` or `>` or `TAB` | Next preset (the built-in presets first, then your custom presets) |
 | `0` | Set the selected band to 0 dB |
 | `SPACE` | Switch the equalizer on / off. The gains stay as they are. |
 | `R` | Reset all bands to **Flat**. The on / off state is not changed. |
+| `S` | **Save** the current curve as a **custom preset**. A *Save as:* prompt opens under the sliders (see *Custom presets* below). |
+| `DEL` or `X` | **Delete** the selected custom preset. Press it twice to confirm. |
 | `ESC` or `SHIFT+E` | Close the overlay. The settings are **saved to `config.txt`** when it closes. |
 
 **Switching on.** Moving a band or choosing a preset also turns the equalizer on, so what you change is always what you hear. Use `SPACE` to compare against the original sound.
 
-**Presets.** The preset keys cycle through the list below in this order. If the gains do not match any preset exactly (for example after you moved a band), the top line shows **Custom**. Stepping to the next or previous preset then continues from the last preset you used.
+**Presets.** The preset keys cycle through the list below in this order, and then through your own custom presets (see below), in the order you saved them. If the gains do not match any preset exactly (for example after you moved a band), the top line shows **Custom**. Stepping to the next or previous preset then continues from the last preset you used.
 
 | Preset | Gains in dB, 31 Hz → 16 kHz |
 |---|---|
@@ -144,18 +146,28 @@ The equalizer works on everything the player plays and changes the sound **while
 | Acoustic | `+4, +4, +3, +1, +2, +2, +3, +3, +3, +2` |
 | Loudness | `+6, +4, +1, 0, -1, -1, 0, +1, +4, +5` |
 
+**Custom presets.** Shape the sliders the way you like, then press `S` to keep the curve as a preset of your own.
+
+- A **Save as:** prompt replaces the line under the sliders and the legend changes to the prompt's keys. Type a name (up to **16 characters**) and press `ENTER` to save it, or `ESC` to cancel. Only the prompt closes on `ESC`; the equalizer stays open. The usual text keys work in the prompt: `←` / `→`, `HOME` / `END`, `SHIFT+←` / `SHIFT+→` to mark, and `CTRL+C` / `CTRL+X` / `CTRL+V`.
+- The new preset is added **after the built-in presets** and appears on the top line under its name whenever the sliders match it. It is written to `config.txt` **immediately**, not only when the overlay closes.
+- If you moved a band away from one of your custom presets, the prompt starts with that preset's name, so `ENTER` alone **updates** it. A name that already belongs to a custom preset (capital letters don't matter) **replaces** that preset.
+- The names of the built-in presets and the word *Custom* cannot be used. The characters `=`, `{` and `}` are replaced by `-`, because the configuration file uses them. You can keep up to **24** custom presets.
+- To **delete** one, select it with `,` / `.` so that the top line shows its name, press `DEL` (or `X`), and press it again within the overlay to confirm. Any other key cancels the deletion. The built-in presets cannot be deleted. The sliders keep their current values after a deletion and show **Custom**.
+- Short messages such as *Saved "My Mix"*, *Updated "My Mix"* or *Deleted "My Mix"* appear on the line under the sliders and disappear with the next key press.
+
 **Preamp.** Boosting bands makes the whole signal louder and can push it into distortion. The player therefore lowers the level automatically by the height of the loudest point of your curve. The **Preamp** value on the top line shows this (for example `-7.1 dB` for Bass Boost). The sound will be slightly quieter with a strong boost than without the equalizer, and that is intended. Raise the volume if you need it louder. The equalizer is bypassed completely when it is off or all bands are 0 dB.
 
 **Good to know.**
 - On a track with a low sample rate (22.05 kHz, for example) the top band is too close to the limit of the signal and is skipped.
 - **Loudness normalization** (`v`) measures the track *before* the equalizer. With a strong boost or cut a track can therefore end up a little louder or quieter than the normalization target.
+- The window is 21 rows high (15 on a terminal with fewer than 24 rows, see the next point), so it still fits on a 24-row terminal.
 - On a terminal with fewer than 24 rows the sliders are drawn in steps of 4 dB instead of 2 dB, so the window fits. The gains themselves still change in steps of 1 dB.
 
 ![Equalizer overlay, main playback UI](images/Playback_Main_UI_EQUALIZER.png)
 
 ### The five play modes (`m`)
 
-Each press moves to the next mode in this order: **list → repeat → shuffle → stop → repeat queue → list …**
+Each press moves to the next mode in this order: **list → repeat → shuffle → stop → queue then stop → list …**
 
 | Mode | Letter | Behavior when a track finishes |
 |---|---|---|
@@ -163,7 +175,7 @@ Each press moves to the next mode in this order: **list → repeat → shuffle �
 | Repeat | `R` | Replays the same track again. |
 | Shuffle | `S` | Plays a random track. If the queue has more than one item, a random queue item is chosen. |
 | Stop | `O` | Plays the track and then stops, with no automatic advance. The "no track loaded" screen with the cassette is shown. |
-| Repeat queue | `Q` | The queue loops: each played item is moved to the back instead of being removed. With an empty queue it behaves like list mode. |
+| Queue then stop | `Q` | Plays the queue **once**, then stops. It never falls through to the library: when the queue is used up, playback ends (like Stop mode), also when the queue was empty to begin with and a library track finishes. With the queue **locked** (default) each item goes to the back as it is played and the pass ends after the last unplayed item, so the queue is back in its original order afterwards. Tracks you add during the pass (`a`, `e`, bulk add) still play before it ends. Unlocked, played items leave the queue and it stops when it is empty. `n` always skips on, also after the pass is over (it starts a new one). |
 
 ---
 
@@ -354,14 +366,14 @@ The queue is a list of tracks that play **before** the normal list continues. Pr
 
 | Key | Action | What it does |
 |---|---|---|
-| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next (while the queue is locked: right after the track that was played last). Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
+| `a` | Add hovering track as **next** | With the **list** focused, puts the highlighted track at the **front** of the queue, so it plays next. Pressing `a` on several tracks in a row keeps their order: A, B, C play as A, B, C. On a playlist row it queues all of the playlist's tracks at the end instead. With the **queue** focused, `a` opens the **bulk-add** panel (see below). |
 | `e` | Add hovering track to the **end** | With the **list** focused, adds the highlighted track to the end of the queue. On a playlist row it queues the whole playlist at the end. With the queue focused it only reminds you to focus the list first. |
 | `d` | Remove hovering track from queue | Removes the highlighted queue item. Focus the queue with `TAB` first. |
 | `4` | Move hovering queue item up | Moves the highlighted queue item one place up. Focus the queue first. |
 | `5` | Move hovering queue item down | Moves the highlighted queue item one place down. Focus the queue first. |
 | `$` (Shift+4) | Move to top | Moves the highlighted queue item to the very top of the queue. |
 | `%` (Shift+5) | Move to bottom | Moves the highlighted queue item to the very bottom of the queue. |
-| `!` | Lock / unlock the queue | A **locked** queue keeps its tracks when they are played. See *Locked queue* below. |
+| `!` | Lock / unlock the queue | The queue is **locked by default**: a played track moves to the end of the queue. Unlocked, it leaves the queue. See *Locked queue* below. |
 | `X` (Shift+X) | Clear the whole queue | Asks "Want to clear queue?" first. See below. |
 | `CTRL+SHIFT+Z` | Undo the last queue clear | Brings back the queue that `SHIFT+X` cleared. See *Undo clear* below. |
 | `CTRL+SHIFT+U` | Queue to playlist | Saves the queue's local tracks as a playlist. See *Queue to playlist* below. |
@@ -394,7 +406,9 @@ Only one of the two overlays can be open at a time: `SHIFT+K` while the list ove
 
 ### Locked queue (`!`)
 
-Normally a track **leaves the queue** when it is played. With the queue **locked** it stays: nothing is erased by auto-advance or by `n`; playback walks through the queue in place instead, from the track that was played last to the one after it, and wraps around from the end to the start (in shuffle mode a random queue item is picked). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`, and `a` then inserts right after the track that was played last. Press `!` again to unlock; played tracks then leave the queue again. The lock state is part of the saved session.
+The queue is **locked by default**. A locked queue keeps all its tracks: when a track is played (by auto-advance or by `n`) it **moves to the end of the queue**, so the queue loops instead of draining, and the next track is always the one at the top (in shuffle mode a random queue item is picked and sent to the end). `d` and `SHIFT+X` still remove tracks, locking only stops tracks from disappearing by themselves. The panel title shows `QUEUE (locked)`.
+
+Press `!` to **unlock**: a track then **leaves the queue** once it is played, and the queue runs empty. Press `!` again to lock it. The lock state is part of the saved session, so a session saved by an older version keeps the state it was saved with (press `!` once if it comes back unlocked). The play modes do not change this, with one exception: in `Q` (queue then stop) a locked queue is played through once and playback then stops instead of looping.
 
 ### Undo clear (`CTRL+SHIFT+Z`)
 
@@ -402,7 +416,7 @@ Brings back the queue that was cleared last with `SHIFT+X`. The restored tracks 
 
 ### Queue to playlist (`CTRL+SHIFT+U`)
 
-Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` or `Fn+←` to save. Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
+Opens the playlist editor (see [Playlists](#6-playlists)) with the queue's tracks already in the new playlist and the **name field focused**: type a name and press `HOME` to save (the editor stays open, `ESC` leaves it). Playlists hold local files only, so **online (streamed) queue items are left out** and counted in the status line; duplicate files are added once. With an empty queue, or a queue with online tracks only, nothing opens and the status line says so.
 
 ### Clear queue prompt (`SHIFT+X`)
 
@@ -676,7 +690,7 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 | Vis. Fluidity | 1–10 | How the visualizer bars **rise**. It affects only the rising motion. |
 | Waveform Style | raw, smooth | Waveform drawing style. Same as the `w` key. |
 | Disk Speed | 0.01, 0.05, 0.10, 0.17, 0.25, 0.50, 0.75, 1.00 | How fast the disk spins. |
-| Playback Mode | list, loop, shuffle, stop, repeat queue | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
+| Playback Mode | list, loop, shuffle, stop, queue then stop | The play mode. Same as the `m` key (`loop` is the mode shown as *repeat*). |
 | Vis. Degradation | 1–10 | How quickly bars **fall**. `1` is a slow, VU-meter-like fade, `10` a near-instant cutoff. |
 | Vis. Viscosity | 1–10 | How strongly the bar motion is damped and smoothed between neighbouring bars. |
 | Lyrics Alignment | left, center, right | Where lyric lines sit in their area. |
@@ -727,6 +741,7 @@ The longest tab. It scrolls as one list and has two parts: the hotkeys, then the
 | `AutoSaveDelayInSec` | How often the session snapshot is saved (default 30 seconds). |
 | `UpperLeftCorner`, `Vertical`, `Horizontal`, `Seprator`, `ListSeparator` and the other border entries | The characters used to draw frames and the list column separator. |
 | `EqualizerEnabled`, `EqualizerBands` | Whether the equalizer is on, and its ten band gains in dB (−12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8 and 16 kHz, for example `EqualizerBands=0,3,-2,0,0,0,0,0,0,0`. Normally changed with the `SHIFT+E` overlay, which writes them here. Values outside the range are limited to it. A line with fewer or more than ten valid numbers is ignored. |
+| `EqualizerPreset` | One **custom preset** per line: the ten gains, a `\|`, then the name, for example `EqualizerPreset=4,3,1,0,-1,0,1,2,3,4\|My Mix`. The gains use the same band order as `EqualizerBands`. Created and deleted with `S` and `DEL` / `X` in the `SHIFT+E` overlay, which rewrites these lines. If you edit them by hand: a line without a `\|`, with an empty name, with the name of a built-in preset, with a name that appears twice, or with fewer or more than ten valid gains is ignored, and only the first 24 presets are used. |
 
 ---
 
