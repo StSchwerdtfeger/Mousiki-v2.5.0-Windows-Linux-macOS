@@ -128,6 +128,10 @@ EqualizerEnabled=false
 EqualizerBands=0,0,0,0,0,0,0,0,0,0
 ## Ten gains in dB (-12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz.
 ## Easier to change with the overlay (Shift+E), which also has presets.
+## EqualizerPreset=<ten gains>|<name> is one custom preset (same band order as above), up to 24.
+## Create and delete them in the overlay: S saves the current curve under a name, DEL/X deletes the selected one.
+## Example (remove the leading ## to use it):
+## EqualizerPreset=4,3,1,0,-1,0,1,2,3,4|My Mix
 
 ##-------------------------------------------
 ##             CONSOLE / LOGGING
