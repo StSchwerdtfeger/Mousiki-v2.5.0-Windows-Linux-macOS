@@ -365,9 +365,9 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 <p align="center"><img width="848" height="397" alt="grafik" src="https://github.com/user-attachments/assets/05c23222-efb6-44be-b74b-3e47803df2d1" /></p>
 
-- **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`.
+- **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`. Custom presets can be created, saved and deleted. Built in presets can't be deleted. 
 
-<p align="center"><img width="815" height="380" alt="grafik" src="https://github.com/user-attachments/assets/861491c8-68d5-46f1-bf9f-c38e413f1f12" /></p>
+<p align="center"><img width="848" height="399" alt="grafik" src="https://github.com/user-attachments/assets/534f4f2c-2d3e-4a35-a99c-e8cd78861dcd" /></p>
 
 - **Track and queue list overlay** for the playback UI: `SHIFT+L` opens an enlarged list pane, `SHIFT+K` an enlarged queue pane (kept off `q` on purpose, so you cannot quit by accident), `SHIFT+↑/↓` scroll page-wise, `ESC` or the same key closes. Playback keys keep working inside the overlays. Queues are locked by default (a played track moves to the end instead of disappearing; unlock with `!` and it leaves the queue) and the queue can be saved as playlist (moving to the playlist menu). Several other commands such as add to end and move to top/bottom are also added
  
