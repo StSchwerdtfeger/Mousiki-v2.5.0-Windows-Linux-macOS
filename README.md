@@ -37,7 +37,9 @@ Along the Win32 port, **a lot of minor and major additions were made too**. The 
 
 <p align="center"><img width="800" alt="preview" src="preview.gif" /></p>
 
-My current setup looks like the below. The current default config.txt uses the below theme too. It is adjusted to fit my cyber-cat themed **MeowerShell** terminal setup [(see Gihub repository for config files)](https://github.com/StSchwerdtfeger/Meower-Shell), which includes FastFetch and Oh-My-Posh and loads recommendations for helpful apps like yazi, fzf fuzzy search...
+<p align="center"><img width="800" alt="preview" src="mousiki_xy_mode_osci.gif" /></p>
+
+My current setup looks like the last .gif and the below below. The current default config.txt uses the below theme too. It is adjusted to fit my cyber-cat themed **MeowerShell** terminal setup [(see Gihub repository for config files)](https://github.com/StSchwerdtfeger/Meower-Shell), which includes FastFetch, Oh-My-Posh and loads of recommendations for lovers of the terminal, e.g. helpful apps like yazi, fzf fuzzy search ...
 
 <p align="center"><img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" /></p>
 
