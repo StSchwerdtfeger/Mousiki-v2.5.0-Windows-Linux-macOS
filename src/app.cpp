@@ -9493,8 +9493,45 @@ int App::player_view_height(int w) const {
 // parked in the last column (pending wrap) it would erase that last cell.
 static std::string soften_fullscreen_frame(const std::string& frame, int cols) {
     static const std::string kClear = "\x1b[2J";
+    // Only valid for frames that are painted top-to-bottom with plain newlines.
+    // A frame that places its content with absolute cursor moves ("ESC[row;colH",
+    // as the Settings screen does for every cell) neither overwrites the cells it
+    // no longer uses -- after a tab switch the old tab would show through -- nor
+    // ends with the cursor at the bottom, so the trailing "ESC[0J" would wipe
+    // part of the screen (a caret parked mid-screen while editing a value took
+    // everything below it along). Those keep their full clear.
+    {
+        size_t i = (frame.compare(0, kClear.size(), kClear) == 0) ? kClear.size() : 0;
+        if (frame.compare(i, 3, "\x1b[H") == 0) i += 3; // the plain cursor-home that follows the clear
+        for (; i < frame.size(); ++i) {
+            if (frame[i] != '\x1b' || i + 1 >= frame.size() || frame[i + 1] != '[') continue;
+            size_t j = i + 2;
+            while (j < frame.size() && !(static_cast<unsigned char>(frame[j]) >= 0x40 && static_cast<unsigned char>(frame[j]) <= 0x7E)) ++j;
+            if (j < frame.size() && std::string("HfdGABCDEFsu").find(frame[j]) != std::string::npos) return frame;
+            i = j;
+        }
+    }
     std::string in = frame;
     if (in.compare(0, kClear.size(), kClear) == 0) in.erase(0, kClear.size());
+
+    // Only valid for frames painted top to bottom with plain newlines. A frame
+    // that places text with absolute cursor moves ("ESC[row;colH" -- the
+    // Settings screen does this for every cell) only overwrites the cells it
+    // writes; whatever the previous tab/screen drew elsewhere would stay on
+    // screen and the two would be mushed together. Those frames keep the full
+    // erase (the identical-frame skip and the synchronized write still stop it
+    // from flickering).
+    for (size_t i = 0; i + 1 < in.size(); ++i) {
+        if (in[i] != '\x1b' || in[i + 1] != '[') continue;
+        size_t j = i + 2;
+        bool has_digit = false;
+        while (j < in.size() && ((in[j] >= '0' && in[j] <= '9') || in[j] == ';' || in[j] == '?')) {
+            if (in[j] >= '0' && in[j] <= '9') has_digit = true;
+            ++j;
+        }
+        if (j < in.size() && in[j] == 'H' && has_digit) return frame;
+        i = j;
+    }
 
     std::string out;
     out.reserve(in.size() + 256);
