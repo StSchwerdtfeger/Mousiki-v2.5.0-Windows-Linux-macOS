@@ -5,10 +5,12 @@
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
+#include <cerrno>
 #if defined(_WIN32)
 #include "win_compat.h"
 #else
 #include <sys/ioctl.h>
+#include <poll.h>
 #include <termios.h>
 #include <unistd.h>
 #include <csignal>
@@ -446,6 +448,31 @@ int TerminalIO::poll_key() {
     if (c == 0x0c) { g_last_key_was_arrow = false; return kKeyAltL; }
     g_last_key_was_arrow = false;
     return c;
+#endif
+}
+
+void write_frame(const std::string& frame) {
+#if defined(_WIN32)
+    std::cout << frame << std::flush;
+#else
+    std::cout.flush(); // anything already buffered must precede the frame
+    std::string buf;
+    buf.reserve(frame.size() + 16);
+    buf += "\x1b[?2026h"; // begin synchronized update
+    buf += frame;
+    buf += "\x1b[?2026l"; // end synchronized update -> terminal paints the finished frame
+    size_t off = 0;
+    while (off < buf.size()) {
+        ssize_t n = ::write(STDOUT_FILENO, buf.data() + off, buf.size() - off);
+        if (n > 0) { off += static_cast<size_t>(n); continue; }
+        if (n < 0 && errno == EINTR) continue;
+        if (n < 0 && errno == EAGAIN) { // non-blocking tty: wait until it can take more
+            struct pollfd pfd = {STDOUT_FILENO, POLLOUT, 0};
+            ::poll(&pfd, 1, 50);
+            continue;
+        }
+        break; // real error (terminal gone) -- nothing sensible left to do
+    }
 #endif
 }
 

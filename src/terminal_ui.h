@@ -175,6 +175,16 @@ void set_text_entry(bool on);
 std::string clipboard_get();
 void clipboard_set(const std::string& utf8);
 
+// Sends one finished frame to the terminal. On POSIX the whole frame goes out
+// in a SINGLE write() wrapped in a synchronized-update bracket (DEC private
+// mode 2026): `std::cout << frame` on a line-buffered tty gets chopped into many
+// small write()s, and terminals that repaint in between (Windows Terminal /
+// ConPTY under WSL in particular) then show half-drawn frames -- the
+// menus/overlays flicker. Terminals that do not know mode 2026 ignore it.
+// Windows keeps the existing std::cout path (its streambuf already emits one
+// WriteConsoleW per flush).
+void write_frame(const std::string& frame);
+
 // Truncates/right-pads (by byte length — good enough for the mostly-ASCII
 // UI text here; multi-byte titles may render slightly short) to exactly
 // `width` visible columns.

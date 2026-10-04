@@ -9466,6 +9466,54 @@ int App::player_view_height(int w) const {
 // Frame assembly
 // ---------------------------------------------------------------------
 
+// Full-screen modes (Settings, Console, Cheatsheet, Playlist, Meta editor,
+// History) build their frame with a leading "ESC[2J" -- erase the whole screen
+// -- and used to send it on EVERY frame, 25 times a second, even though they
+// are mostly static. Erasing and then repainting the screen 25x/s is exactly
+// what a terminal shows as flicker whenever it paints between the erase and
+// the repaint (WSL/ConPTY does this readily).
+//
+// Once the mode is already on screen (see hard_clear in render_frame()) the
+// erase is not needed: this drops it and instead repaints in place, clearing
+// only what is actually stale -- the rest of every line that is shorter than
+// the terminal ("ESC[K"), and everything below the last line ("ESC[0J").
+// Lines that already span the full width get no "ESC[K": with the cursor
+// parked in the last column (pending wrap) it would erase that last cell.
+static std::string soften_fullscreen_frame(const std::string& frame, int cols) {
+    static const std::string kClear = "\x1b[2J";
+    std::string in = frame;
+    if (in.compare(0, kClear.size(), kClear) == 0) in.erase(0, kClear.size());
+
+    std::string out;
+    out.reserve(in.size() + 256);
+    size_t pos = 0;
+    while (pos < in.size()) {
+        size_t nl = in.find('\n', pos);
+        if (nl == std::string::npos) {           // trailing partial line: "ESC[0J" below covers it
+            out.append(in, pos, std::string::npos);
+            break;
+        }
+        // Visible text of this line = everything except CSI escape sequences.
+        std::string visible;
+        visible.reserve(nl - pos);
+        for (size_t i = pos; i < nl; ) {
+            if (in[i] == '\x1b' && i + 1 < nl && in[i + 1] == '[') {
+                i += 2;
+                while (i < nl && !(static_cast<unsigned char>(in[i]) >= 0x40 && static_cast<unsigned char>(in[i]) <= 0x7E)) ++i;
+                if (i < nl) ++i;                  // the final byte
+            } else {
+                visible += in[i++];
+            }
+        }
+        out.append(in, pos, nl - pos);
+        if (display_width(visible) < cols) out += "\x1b[K";
+        out += '\n';
+        pos = nl + 1;
+    }
+    out += "\x1b[0J";
+    return out;
+}
+
 std::string App::render_frame(TerminalIO& term) {
     int term_cols = term.cols();
     // Was clamped to a minimum of 80 regardless of the real terminal
@@ -9552,32 +9600,41 @@ std::string App::render_frame(TerminalIO& term) {
         return std::min(player_view_height(w), std::max(1, term_rows_ - 1));
     };
 
+    // Finishes a full-screen frame: clamp to the terminal height, and -- unless
+    // this is the frame that switches the mode / resizes (hard_clear) -- repaint
+    // in place instead of erasing the whole screen again (see
+    // soften_fullscreen_frame()).
+    auto fullscreen_out = [&](std::ostringstream& frame) {
+        std::string clamped = clamp_output_rows(frame.str(), term_rows_);
+        return hard_clear ? clamped : soften_fullscreen_frame(clamped, term_cols);
+    };
+
     if (mode_ == Mode::Settings || mode_ == Mode::ColorEdit) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_settings_screen(frame, W, overlay_budget(W));
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     if (mode_ == Mode::Console) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_console_screen(frame, W, overlay_budget(W));
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     if (mode_ == Mode::Cheatsheet) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_cheatsheet_screen(frame, W);
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     if (mode_ == Mode::Playlist) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_playlist_screen(frame, W, overlay_budget(W));
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     if (mode_ == Mode::MetaEdit) {
@@ -9588,14 +9645,14 @@ std::string App::render_frame(TerminalIO& term) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_meta_screen(frame, W, overlay_budget(W));
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     if (mode_ == Mode::History) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_history_screen(frame, W, overlay_budget(W));
-        return clamp_output_rows(frame.str(), term_rows_);
+        return fullscreen_out(frame);
     }
 
     // --- Browse mode (and the background behind BulkAdd/RetryLyrics):
@@ -9873,6 +9930,9 @@ int App::run() {
     last_autosave_at_ = std::chrono::steady_clock::now();
     ConsoleLog::instance().log_verbose("terminal: " + std::to_string(term.rows()) + "x" + std::to_string(term.cols()) + " (rows x cols, raw ioctl)");
 
+    std::string last_frame_str;
+    auto last_frame_written_at = std::chrono::steady_clock::now();
+
     while (!quit_) {
         // Drain every key already queued before rendering, rather than
         // one per frame. A single keystroke can arrive as more than one
@@ -9949,7 +10009,18 @@ int App::run() {
         }
 
         std::string frame_str = render_frame(term);
-        std::cout << frame_str << std::flush;
+        // Static screens (menus, settings, a paused player) produce the very
+        // same bytes frame after frame; sending them again only gives the
+        // terminal something to repaint. Skip identical frames, but still
+        // resend one every couple of seconds so the screen heals itself if
+        // anything outside the app (a terminal resize/restore) scribbled on it.
+        const auto frame_now = std::chrono::steady_clock::now();
+        if (frame_str != last_frame_str ||
+            frame_now - last_frame_written_at > std::chrono::seconds(2)) {
+            write_frame(frame_str);
+            last_frame_str = std::move(frame_str);
+            last_frame_written_at = frame_now;
+        }
         // 25fps (was 12.5fps) — the 700ms waveform reveal animation only
         // got ~9 frames to work with at the old 80ms cadence, which
         // showed as a handful of visible ~11% jumps rather than a smooth
