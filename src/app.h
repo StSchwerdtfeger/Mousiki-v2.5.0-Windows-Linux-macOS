@@ -814,7 +814,7 @@ private:
     void handle_settings_key(int key);
 
     // --- PATHS tab (tab 3) --------------------------------------------------
-    // The LOCAL PATH, DOWNLOAD FOLDER and PLAYLIST PATH sections (they used
+    // The LOCAL PATH, DOWNLOAD PATH and PLAYLIST PATH sections (they used
     // to live on the ON/OFF tab, which is now a plain list of toggles). Two
     // of them are editable path lists, each introduced by a section header
     // and ending in a "+ new path" row.
@@ -830,7 +830,7 @@ private:
         int sel = -1;              // selectable index, -1 for headers (unselectable)
         int path_index = -1;       // Path: index inside the owning vector
         bool playlist_path = false; // Path/AddPath: true = playlist paths, false = local music paths
-        // Path: the single DOWNLOAD FOLDER field. It reads/writes
+        // Path: the single DOWNLOAD PATH field. It reads/writes
         // settings_.download_folder instead of either vector, hence the
         // path_index = -1 that never reaches them -- every consumer
         // switches on this flag first.

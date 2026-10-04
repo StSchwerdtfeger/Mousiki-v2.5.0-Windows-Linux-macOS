@@ -913,7 +913,7 @@ App::App() {
     }
     // And the configured download folder, for the same reason: whatever
     // yt-dlp writes has to be scannable without a second LocalMusicPath
-    // line, which is what the DOWNLOAD FOLDER setting promises. Skipped
+    // line, which is what the DOWNLOAD PATH setting promises. Skipped
     // while it is still the default -- that IS the cache dir just above.
     std::string download_dir_str = path_utf8(cache_.download_dir());
     if (download_dir_str != cache_dir_str
@@ -1185,7 +1185,7 @@ void App::rescan_library() {
     }
     // And the configured download folder, for the same reason: whatever
     // yt-dlp writes has to be scannable without a second LocalMusicPath
-    // line, which is what the DOWNLOAD FOLDER setting promises. Skipped
+    // line, which is what the DOWNLOAD PATH setting promises. Skipped
     // while it is still the default -- that IS the cache dir just above.
     std::string download_dir_str = path_utf8(cache_.download_dir());
     if (download_dir_str != cache_dir_str
@@ -1383,7 +1383,7 @@ std::vector<PlaylistSummary> App::filter_playlists(const std::string& query) con
 // none configured at all, which by the time this runs may itself have
 // become the cache folder -- see load_library()'s cache-dir injection).
 // Unrelated to HKeyDownloadStream's folder, which comes from the
-// separate DOWNLOAD FOLDER setting (cache_.download_dir()) instead.
+// separate DOWNLOAD PATH setting (cache_.download_dir()) instead.
 // Computed fresh every call, not cached, so it always reflects whatever
 // the user currently has set in Settings.
 fs::path App::playlists_dir() const {
@@ -2430,7 +2430,7 @@ void App::commit_bulk_add(bool all) {
 
 // Tab layout: 0=Colors, 1=On/Off, 2=Animation, 3=Paths, 4=Reference, 5=About App.
 //
-// The Paths tab holds the LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
+// The Paths tab holds the LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH
 // sections (editable path rows -- see build_path_rows(); they used to sit
 // on the ON/OFF tab).
 //
@@ -2552,7 +2552,7 @@ static constexpr int kOnOffToggleCount =
 
 // Rebuilds the row list of the PATHS tab: a "LOCAL PATH" header +
 // one row per configured local music path + a "+ new path" row, then the
-// single DOWNLOAD FOLDER row, then the same three for the playlist paths.
+// single DOWNLOAD PATH row, then the same three for the playlist paths.
 // Headers are display-only (sel stays -1); everything else gets the next
 // selectable index in order, starting at 0.
 //
@@ -2593,7 +2593,7 @@ std::vector<App::PathRow> App::build_path_rows() const {
 
     add_path_section("LOCAL PATH", false);
 
-    // DOWNLOAD FOLDER: yt-dlp's single output folder, deliberately NOT run
+    // DOWNLOAD PATH: yt-dlp's single output folder, deliberately NOT run
     // through add_path_section() -- there is only ever one place downloads
     // land, so there is nothing to list and no "+ new path" to add. Reads
     // and writes settings_.download_folder (see settings_get_value() /
@@ -2603,7 +2603,7 @@ std::vector<App::PathRow> App::build_path_rows() const {
     {
         PathRow h;
         h.kind = PathRow::Kind::Header;
-        h.label = "DOWNLOAD FOLDER";
+        h.label = "DOWNLOAD PATH";
         rows.push_back(h);
 
         PathRow d;
@@ -2770,7 +2770,7 @@ std::string App::settings_get_value(int row, int col) const {
         return it != settings_.hotkeys.end() ? it->second : "";
     }
     if (settings_tab_ == 3) {
-        // The path rows (LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH): the
+        // The path rows (LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH): the
         // string at their index in the owning vector, which is "" both for
         // a not-yet-set path and for a placeholder row shown while the
         // vector is still empty.
@@ -3898,9 +3898,9 @@ void App::handle_key(int key) {
     } else if (action == "HKeyDownloadStream") { // save cached stream to the configured download folder
         if (has_track_) {
             if (path_utf8(current_path_).find(".cache") != std::string::npos || metadata_.location == "youtube") {
-                // Same folder the DOWNLOAD FOLDER setting promises everywhere
+                // Same folder the DOWNLOAD PATH setting promises everywhere
                 // else (see load_library()'s cache-dir injection and the
-                // Settings > PATHS tab's Download Folder field): the
+                // Settings > PATHS tab's Download Path field): the
                 // configured path, or ~/.cache/mousiki when none is set --
                 // never settings_.local_music_paths[0]/$HOME/Music, which
                 // this used to fall back to and had nothing to do with the
@@ -5800,7 +5800,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
 // bold plus settings_.header_color -- the Colors tab's HEADER row, a
 // palette index of the 256 by default (10, which is exactly the color
 // the REFERENCE tab's category titles have always been drawn in, and
-// what the PATHS tab's LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH titles borrow). An
+// what the PATHS tab's LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH titles borrow). An
 // explicit 0/empty means "no color" here like it does everywhere else,
 // which degrades these to plain bold rather than to a stray escape.
 static std::string header_sgr(const Settings& s) {
@@ -7620,7 +7620,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     } else if (settings_tab_ == 1) {
         // ON/OFF: the toggles (kOnOffToggles), one row each. The viewport
         // follows settings_row_ so the tab stays usable on a very short
-        // terminal. (The LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
+        // terminal. (The LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH
         // sections used to be listed under the toggles; they now live on
         // the PATHS tab.)
         int visible = std::max(1, MAX_Y - 3);
@@ -7652,7 +7652,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             y++;
         }
     } else if (settings_tab_ == 3) {
-        // PATHS tab: the LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH
+        // PATHS tab: the LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH
         // sections (build_path_rows()) -- editable path rows, each list
         // ending in a "+ new path" row except the single download folder.
         // Scrolls as one list (viewport follows settings_row_, centered)
@@ -7689,7 +7689,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 const bool sel = (r.sel == settings_row_ && mode_ != Mode::ColorEdit);
                 const bool ed = (r.sel == settings_row_ && mode_ == Mode::ColorEdit);
                 if (r.kind == PathRow::Kind::Path) {
-                    std::string lab = r.download_folder ? "Download Folder"
+                    std::string lab = r.download_folder ? "Download Path"
                                       : std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
                                         + std::to_string(r.path_index + 1);
                     pos(y, 6, pad(lab, 25)); pos(y, 32, ":");
@@ -8094,7 +8094,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#DEL / x", "Equalizer: delete the selected custom preset (press twice)"},
         {nullptr, "#TAB / ENTER", "Top Tracks tab: switch pane / add top 10-25-50-100 to queue"},
         // --- Downloads ---
-        {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Folder, else .cache/mousiki)"},
+        {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Path, else .cache/mousiki)"},
     };
 
     // Same height as every other full-screen view: term_rows_ - 1 lines (the

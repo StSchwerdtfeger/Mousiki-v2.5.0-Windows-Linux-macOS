@@ -120,7 +120,7 @@ struct Settings {
     std::string button_color;
 
     // Section headers drawn by the Settings panel itself: the category
-    // titles on the REFERENCE tab and the "LOCAL PATH" / "DOWNLOAD FOLDER" /
+    // titles on the REFERENCE tab and the "LOCAL PATH" / "DOWNLOAD PATH" /
     // "PLAYLIST PATH" titles on the PATHS tab. Default "10" -- palette index 10 of 256,
     // exactly the color the Reference tab headers have always been drawn
     // in -- changeable from the Colors tab's HEADER row, or ColorHeader=
