@@ -1,5 +1,7 @@
 # Mousiki release toolkit
 
+Toolkit to create setup and portable version packages of the Mousiki TUI music player for Win/Linux/macOS. Set file paths (only dummy paths below) and repository names in case necessary for your demands. To create a setup package for macOS you have to create a repository on your Github account to make use of Github Actions. The packaging for Windows and Linux runs fully locally. The packaging for Linux (Ubuntu / Debian) uses WSL. The toolkit probably needs adjustments running it on other systems (only tested in Windows). Theoretically the packages can also be signed (not mandatory). I did not test and do so in the latest release for v2.5.0, but the toolkit was adjusted to be able to do so. 
+
 One Python script (`release.py`, standard library only) turns the **Mousiki source `.zip`** into installers and portable zips.
 Copy the `packaging/` and `.github/` folders into the root of your Mousiki GitHub repository
 (`StSchwerdtfeger/Mousiki-Windows-Native-Port`); you run everything from Windows.
@@ -25,7 +27,7 @@ The manual is found automatically (first `*.pdf` under the source's `Mousiki_Use
 ## Where each platform is built
 
 * **Windows** – on your PC (CMake + Visual Studio Build Tools + Inno Setup) **or** on GitHub Actions (required for signing).
-* **Linux** – inside **WSL** (Ubuntu) on your PC, or on GitHub Actions.
+* **Linux** – inside **WSL** (Ubuntu) on your PC, or on GitHub Actions. 
 * **macOS** – only on GitHub Actions (or a Mac).
 
 ## One-time setup (Windows)
