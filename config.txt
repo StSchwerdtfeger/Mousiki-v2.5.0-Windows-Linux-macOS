@@ -7,17 +7,23 @@
 ##-------------------------------------------
 
 # Frame & Controls
-ColorBorderTop=250
-ColorBorderBottom=250
-ColorDiskTop=240
-ColorDiskBottom=255
-ColorMetadataKey=
-ColorMetadataVal=
-ColorVizLeft=250
-ColorVizRight=250
-ColorProgressBarPlayed=250
-ColorProgressBarPending=245
+ColorBorderTop=170
+ColorBorderBottom=170
+ColorDiskTop=170
+ColorDiskBottom=30
+ColorMetadataKey=170
+ColorMetadataVal=182
+ColorVizLeft=170
+ColorVizRight=30
+ColorProgressBarPlayed=170
+ColorProgressBarPending=182
+
+# Section headers (the REFERENCE tab's category titles and the
+# LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH titles on the PATHS tab) -- 0 = no color, plain bold text
 ColorHeader=10
+
+# Key command legends (the grey hint lines such as "[ESC] close" in the Settings, the big
+# list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default
 ColorLegend=90
 
 # List
