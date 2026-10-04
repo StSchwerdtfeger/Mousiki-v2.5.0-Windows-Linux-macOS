@@ -500,6 +500,7 @@ private:
     bool quit_ = false;
     bool force_redraw_ = false;
     int last_render_w_ = -1;
+    int last_render_rows_ = -1; // terminal height of the previous frame: a height change needs a full repaint too
     Mode last_render_mode_ = Mode::Browse;
 
     // --- mute (volume forced to 0 without touching pause state) --------

@@ -7845,10 +7845,22 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     if (bot_tabs.empty()) {
         pos(y, 1, B(y) + "\u2514" + repeat("\u2500", W - 2) + "\u2518" + R);
     } else {
+        // Measured in display COLUMNS, not bytes: "\u2514" and "\u2500" are 3 bytes
+        // but one column each, so bot.size() over-counted by 2 per box-drawing
+        // character and the row came out ~4 columns short of the right border.
+        // Every tab segment is name + 5 columns: " [" NAME "] " or "  " NAME "  ",
+        // plus the trailing "\u2500". A tab that would not fit before the closing
+        // "\u2518" is dropped rather than letting the row wrap.
         std::string bot = "\u2514\u2500";
-        for (int i : bot_tabs) bot += (i == settings_tab_ ? " [" + std::string(kTabNames[i]) + "] \u2500" : "  " + std::string(kTabNames[i]) + "  \u2500");
-        int rem_bot = W - static_cast<int>(bot.size()); if (rem_bot < 1) rem_bot = 1;
-        pos(y, 1, B(y) + bot + repeat("\u2500", rem_bot - 1) + "\u2518" + R);
+        int bot_cols = 2;
+        for (int i : bot_tabs) {
+            const int seg_cols = static_cast<int>(std::string(kTabNames[i]).size()) + 5;
+            if (bot_cols + seg_cols > W - 1) break;
+            bot += (i == settings_tab_ ? " [" + std::string(kTabNames[i]) + "] \u2500" : "  " + std::string(kTabNames[i]) + "  \u2500");
+            bot_cols += seg_cols;
+        }
+        const int rem_bot = std::max(0, W - 1 - bot_cols); // columns of "\u2500" before the corner
+        pos(y, 1, B(y) + bot + repeat("\u2500", rem_bot) + "\u2518" + R);
     }
     y++;
 
@@ -9571,7 +9583,7 @@ std::string App::render_frame(TerminalIO& term) {
         }
         return 0;
     };
-    bool hard_clear = (W != last_render_w_) || (mode_family(mode_) != mode_family(last_render_mode_)) || force_redraw_;
+    bool hard_clear = (W != last_render_w_) || (term_rows_ != last_render_rows_) || (mode_family(mode_) != mode_family(last_render_mode_)) || force_redraw_;
     if (last_render_w_ != -1 && W != last_render_w_) {
         // Verbose-only: raw ioctl terminal size alongside the clamped
         // app-usable width, i.e. "what the OS actually told us" versus
@@ -9582,6 +9594,7 @@ std::string App::render_frame(TerminalIO& term) {
     }
     force_redraw_ = false; // one-shot -- consumed by this frame
     last_render_w_ = W;
+    last_render_rows_ = term_rows_;
     last_render_mode_ = mode_;
     const char* clear_prefix = hard_clear ? "\x1b[2J\x1b[H" : "\x1b[H";
 
@@ -10008,7 +10021,22 @@ int App::run() {
             history_.add_listened(dt);
         }
 
-        std::string frame_str = render_frame(term);
+        // A layout bug on some odd terminal size (a negative width reaching a
+        // std::string, a vector sized from a negative row count, ...) used to
+        // throw out of render_frame(), through run(), and end the program --
+        // which is exactly what a window being dragged smaller looks like from
+        // the outside. Skip that one frame instead (the next resize event or
+        // frame will usually lay out fine), log it, and force a full repaint
+        // once rendering works again.
+        std::string frame_str;
+        try {
+            frame_str = render_frame(term);
+        } catch (const std::exception& e) {
+            ConsoleLog::instance().log_basic(std::string("render skipped (") + std::to_string(term.cols()) + "x" + std::to_string(term.rows()) + "): " + e.what());
+            force_redraw_ = true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(40));
+            continue;
+        }
         // Static screens (menus, settings, a paused player) produce the very
         // same bytes frame after frame; sending them again only gives the
         // terminal something to repaint. Skip identical frames, but still
