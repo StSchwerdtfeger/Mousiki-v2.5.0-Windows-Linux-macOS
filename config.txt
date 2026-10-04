@@ -19,7 +19,7 @@ ColorProgressBarPlayed=170
 ColorProgressBarPending=182
 
 # Section headers (the REFERENCE tab's category titles and the
-# LOCAL PATH / DOWNLOAD FOLDER / PLAYLIST PATH titles on the PATHS tab) -- 0 = no color, plain bold text
+# LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH titles on the PATHS tab) -- 0 = no color, plain bold text
 ColorHeader=10
 
 # Key command legends (the grey hint lines such as "[ESC] close" in the Settings, the big
@@ -235,7 +235,7 @@ LocalMusicPath=%USERPROFILE%\Music
 # %USERPROFILE%\.cache\mousiki, which is also what Settings shows in this
 # field by default. The folder below is added to the local music paths
 # automatically, so there is no need to repeat it as a LocalMusicPath= line.
-# Editable live in Settings -> PATH ("DOWNLOAD FOLDER").
+# Editable live in Settings -> PATH ("DOWNLOAD PATH").
 #DownloadFolder=D:\Downloads\mousiki
 
 # Navigation
