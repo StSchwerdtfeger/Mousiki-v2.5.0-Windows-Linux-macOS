@@ -1,0 +1,14 @@
+<!-- Paste this section into the project's README / home page. SignPath Foundation requires it. -->
+## Code signing policy
+
+Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+
+* The Windows installer (`Mousiki-<version>-windows-x64-setup.exe`) and the binaries `mousiki.exe` and `fpcalc.exe`
+  are built by the public GitHub Actions workflow `.github/workflows/build-installers.yml` from the source in this repository.
+  Only these files are signed. Bundled third-party tools (FFmpeg, yt-dlp, Python) are unmodified upstream downloads and are not signed by this project.
+* Roles: **Author / committer / reviewer / approver:** [YOUR NAME](https://github.com/StSchwerdtfeger)
+  (add further maintainers here; every signing request is approved by an approver in SignPath).
+* **Privacy policy:** Mousiki does not collect or transmit any personal data. It only contacts the services you use through it
+  (e.g. YouTube via yt-dlp, lyrics and AcoustID lookups when you trigger them).
+* The packages for Linux and macOS are not signed with a code-signing certificate. Linux releases carry a detached GPG signature
+  of `SHA256SUMS.txt` (key fingerprint: `<PUT FINGERPRINT HERE>`).
