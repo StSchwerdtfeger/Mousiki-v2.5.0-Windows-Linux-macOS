@@ -297,14 +297,6 @@ Zero external UI bloat. Mousiki is designed around a fast,
 focused TUI with no unnecessary interface layers. A terminal 
 music player built for people who prefer control.
 
-Mousiki is designed around a fast, focused TUI with no 
-unnecessary interface layers. A terminal music player built 
-for people who prefer control.
-
-Everything is keyboard-driven.
-Everything is configurable.
-Everything stays in your terminal.
-
 Devloper : ender                         Github   : itzender5820
 Email    : itz.ender5820@gmail.com
 Version  : original and final v1.0       Licence  : Apache licence 2.0
