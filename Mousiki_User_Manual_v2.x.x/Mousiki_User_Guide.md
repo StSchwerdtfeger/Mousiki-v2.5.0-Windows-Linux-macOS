@@ -591,7 +591,7 @@ Paste a YouTube playlist link to queue tracks from it.
 
 | Key | Action | What it does |
 |---|---|---|
-| `y` | Save stream | Saves the **currently playing streamed track** into your download folder (**Settings → Paths → Download Folder**, or `~/.cache/mousiki` if none is set). The file is named `Title - Artist.ext`, the cached copy is removed, and the library refreshes so the file appears as a local track. |
+| `y` | Save stream | Saves the **currently playing streamed track** into your download folder (**Settings → Paths → Download PATH**, or `~/.cache/mousiki` if none is set). The file is named `Title - Artist.ext`, the cached copy is removed, and the library refreshes so the file appears as a local track. |
 
 Status messages:
 
@@ -661,7 +661,7 @@ Sets the colours of the interface. There are **15 rows**, each with a name, one 
 *The ON/OFF tab: a list of switches. (The folder settings are on the PATHS tab.)*
 
 
-This tab is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. The folder settings (LOCAL PATH, DOWNLOAD FOLDER, PLAYLIST PATH) are on the **PATHS** tab.
+This tab is a list of **switches** (change them with `←`/`→`). Most are true/false, but **Lyric Viz** picks between `sphere` and `osci`. The folder settings (LOCAL PATH, DOWNLOAD PATH, PLAYLIST PATH) are on the **PATHS** tab.
 
 | Setting | What it does |
 |---|---|
@@ -705,7 +705,7 @@ Three sections, each under its own header. Move onto a row and press `ENTER` to 
 | Section | Rows | What it does |
 |---|---|---|
 | LOCAL PATH | `Local Path 1`, `2`, … plus `+ new path` | The folders scanned for music. `ENTER` edits one. `+ new path` (`ENTER`) adds an empty line and opens it for typing. Committing a change **rescans the library immediately**. |
-| DOWNLOAD FOLDER | one row | Where `y` (Save stream) puts downloaded tracks. Until you set one it shows the default cache folder (`~/.cache/mousiki`). It is added to the scanned folders automatically, so you do not repeat it as a local path. |
+| DOWNLOAD PATH | one row | Where `y` (Save stream) puts downloaded tracks. Until you set one it shows the default cache folder (`~/.cache/mousiki`). It is added to the scanned folders automatically, so you do not repeat it as a local path. |
 | PLAYLIST PATH | `Playlist Path 1`, `2`, … plus `+ new path` | The folders playlists are loaded from. **All** of them are searched. New playlists are saved and deleted in the **first** one. If none is set, the first local path plus `/playlists` is used. |
 
 Paths accept `~` and `%USERPROFILE%` shortcuts, and both slash directions on Windows. Emptying a path line and pressing `ENTER` removes that path. (These sections used to be on the ON/OFF tab.)
