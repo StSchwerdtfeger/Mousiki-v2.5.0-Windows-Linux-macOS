@@ -21,7 +21,7 @@
 [![Windows](https://img.shields.io/badge/Windows-x64-0078D4.svg?logo=windows&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main) [![Linux](https://img.shields.io/badge/Linux-x64-FCC624.svg?logo=linux&logoColor=black)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main) [![macOS](https://img.shields.io/badge/macOS-x64-000000.svg?logo=apple&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main)
 </div>
 
-Mousiki is a terminal music player that was originally built for macOS/Linux by the amazing [itzender5820/mousiki, v1.0](https://github.com/itzender5820/mousiki) for people who prefer control, simplicity, and a keyboard (mousi-**key**). This Mousiki fork lets it also run natively on Windows (including quite a bunch of modifications and additions; design maintained for obvious reasons). All credits for the design, main feature set, and the vast majority of the code goes to the original author. Since v2.5.0 the same code base builds natively on **Linux and macOS** again (see [Quick start (Linux / macOS)](#quick-start-linux--macos)); Windows remains the primary and most tested platform (only tested on Linux via WSL and works fine so far, a few bugs were recently fixed; not tested for macOS and non-WSL Linux systems). Feel free to give feedback in the discussions and report issues you might experience using this modified port.
+Mousiki is a terminal music player that was originally built for macOS/Linux by the amazing [itzender5820/mousiki, v1.0](https://github.com/itzender5820/mousiki) for people who prefer control, simplicity, and a keyboard (mousi-**key**). This Mousiki fork lets it also run natively on Windows (including quite a bunch of modifications and additions; design maintained for obvious reasons). All credits for the design, main feature set, and the vast majority of the code goes to the original author. Since v2.5.0 the same code base builds natively on **Linux and macOS** again (see [Quick start (Linux / macOS)](#quick-start-linux--macos) or use setup packages or portable version for all three platforms in latest release of v2.5.0). Windows remains the primary and most tested platform (only tested Linux via WSL and works fine so far, a few bugs were recently fixed; not tested for macOS and non-WSL Linux systems). Feel free to give feedback in the discussions and report issues you might experience using this modified port. 
 
 Build yourself (see [prerequisites](#prerequisites) below) **or use the installer/portable (x64) version** that is included in the latest release (since v2.1.0). A full **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** (also as [PDF](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.pdf)) walks through every entry of the in-app cheat sheet, every settings tab and every overlay.
 
@@ -43,12 +43,12 @@ My current setup looks like the below. The current default config.txt uses the b
 
 ## Current Status of the Port and Modification (v2.5.0, now with standalone Win_x64 setup.exe / portable version)
 
-For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I might adjust the code to be more polished / robust and might optimize the installer release (currently ~250MB size, installer itself ~80MB, portable .zip ~100MB)... Since v2.5.0 my version of Mousiki also builds on macOS/Linux again (`setup.sh`), which is a first step towards making it potentially integratable into the main branch of the original project (which still seems way too hard after dozens of comments in the last two weeks, at least from my perspective). The Linux/macOS builds are less tested than the Windows one, so reports from users on those platforms would help finalize it more. 
+For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I might adjust the code to be more polished / robust and might optimize the setup release (Win version results currently in ~250MB size, setup itself ~80MB, portable .zip ~100MB)... Since v2.5.0 my version of Mousiki also builds on macOS/Linux again (`setup.sh`), which is a first step towards making it potentially integratable into the main branch of the original project (which still seems way too hard after dozens of comments in the last two weeks, at least from my perspective). The Linux/macOS builds are less tested than the Windows one, so reports from users on those platforms would help finalize it more. 
 Concerning potential new features: further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions, report issues you might experience using this modified port or contributing in any other way...
 
 ## Quick start (Windows)
 
-Installer/portable (x64) is included in the latest release (since v2.1.0) or build yourself via the commands below. **On Linux or macOS?** Jump to [Quick start (Linux / macOS)](#quick-start-linux--macos).
+Setup/portable (x64) version is included in the latest release (since v2.1.0 and since v2.5.0 for all platforms) or build yourself via the commands below. **On Linux or macOS?** Jump to [Quick start (Linux / macOS)](#quick-start-linux--macos).
 
 ```powershell
 # from the repo root
@@ -158,7 +158,7 @@ DownloadFolder=D:\Downloads\mousiki
 
 ## Quick start (Linux / macOS)
 
-Since v2.5.0 the code builds again on Linux and macOS as well (same sources, platform selected at compile time by `CMakeLists.txt`; audio via PulseAudio/PipeWire-pulse or ALSA on Linux and CoreAudio on macOS). Windows remains the primary, most tested platform. `setup.sh` is the counterpart of `setup.ps1`:
+Since v2.5.0 the code builds again on Linux and macOS as well (same sources, platform selected at compile time by `CMakeLists.txt`; audio via PulseAudio/PipeWire-pulse or ALSA on Linux and CoreAudio on macOS). Portable and setup packages can be found under latest release (included since v2.5.0). Windows remains the primary, most tested platform. `setup.sh` is the counterpart of `setup.ps1`:
 
 ```bash
 # from the repo root
@@ -354,7 +354,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 ### Major Additions / Modifications
 
 - **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly.
-- **Installer/portable (x64)** included in the latest release (since v2.1.0) as an alternative to building the app yourself. Installer size is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
+- **Setup/portable (x64)** included in the latest release (since v2.1.0 for Win and since v2.5.0 also for Linux/macOS) as an alternative to building the app yourself. Setup size for windows is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
 - **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`.
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
