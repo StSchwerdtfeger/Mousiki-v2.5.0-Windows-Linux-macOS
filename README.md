@@ -403,8 +403,8 @@ Below is a list of major and minor addition on top of the original v1.0. The des
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
   - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
   - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
-    
-<p align="center"><img width="850" height="386" alt="grafik" src="https://github.com/user-attachments/assets/43241d83-9cdb-41f4-ad37-8793d2fae580" /></p>
+
+<p align="center"><img width="848" height="461" alt="grafik" src="https://github.com/user-attachments/assets/f0be60ad-76d9-441f-95eb-c403693c0376" /></p>
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most played tracks on top" second sort is "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
   - top tracks (top 10 / 25 / 50 / 100) can be added to the queue in the second menu tab (`TAB` switches pane, `Enter` adds). Tabs are switched with `1` / `2` / `3`.
