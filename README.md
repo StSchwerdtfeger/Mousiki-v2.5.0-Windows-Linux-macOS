@@ -199,6 +199,7 @@ The config file is created at `~/.config/mousiki/config.txt` (the `config.txt` i
 | yt-dlp | online search fallback, playlists, streaming, downloads | `yt-dlp` from the package manager, otherwise `pip install --user yt-dlp` (then `~/.local/bin` has to be on your `PATH`) |
 | Python 3 + `requests` | lyrics, fast online search, AcoustID fetch (`requests` is only needed for lyrics) | `python3`, `python3-requests` (or `pip install --user requests`) |
 | `xclip` / `wl-clipboard` (Linux, optional) | pasting into the search field; macOS uses the built-in `pbpaste` | `xclip` on X11, `wl-clipboard` on Wayland |
+| `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
 
 Just like on Windows, FFmpeg, yt-dlp and Python are independent of each other and of the core player: without them, local playback of MP3/FLAC/WAV etc. still works. If you prefer to install everything yourself, build manually:
 
@@ -208,6 +209,19 @@ cmake --build build --parallel
 ```
 
 Keep the `scripts/` folder next to the binary if you move it, otherwise lyrics, fast online search and the AcoustID fetch stop working.
+
+## Where your files go (Linux/macOS)
+
+| | Path |
+|---|---|
+| Config | `~/.config/mousiki/config.txt` |
+| Cache (downloaded/streamed tracks) | `~/.cache/mousiki/` |
+| Log | `~/.cache/mousiki/logs/console.log` |
+| Session snapshot | `~/.cache/mousiki/snapshot/snapshot.json` |
+| Listening history | `~/.cache/mousiki/history/history.json` |
+| Meta editor session (pending edits) | `~/.cache/mousiki/meta_session/session.json` |
+| Playlists (default) | `<first LocalMusicPath>/playlists/`; falls back to `~/.cache/mousiki/playlists/` if no `LocalMusicPath` is set |
+| Fetched lyrics | `<folder of the track>/lyrics/` |
 
 ## Default Keybindings
 
