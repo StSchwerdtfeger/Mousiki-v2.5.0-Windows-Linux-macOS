@@ -2192,7 +2192,7 @@ void App::queue_clear() {
     queue_next_run_ = 0;
     clamp_queue_selected(); // empty queue -> cursor and scroll back to 0
     log_event("queue cleared (" + std::to_string(n) + " track" + (n == 1 ? "" : "s") + " removed) -- "
-              + "CTRL+SHIFT+Z undoes it");
+              + "CTRL+SHIFT+z undoes it");
 }
 
 // Ctrl+Shift+Z. Puts the last cleared queue back in FRONT of whatever was
@@ -2487,7 +2487,7 @@ void App::commit_bulk_add(bool all) {
 // only on a category's first row, and rendered as a section title above it --
 // and finally the read-only font-mapping table loaded from config.txt. (The
 // loudness normalization values used to be editable here as well; they now
-// live in the SHIFT+V overlay of the main UI, see build_norm_menu_panel().
+// live in the SHIFT+v overlay of the main UI, see build_norm_menu_panel().
 // Only the on/off toggle remains on the ON/OFF tab.) This tab
 // deliberately does NOT also list the app's literal/non-rebindable key
 // commands (ESC, Y/N, the playlist and meta editors' own fixed navigation
@@ -2504,8 +2504,8 @@ void App::commit_bulk_add(bool all) {
 // always safe -- rebinding still keys off the action name, never off the
 // row's position.
 // How a key is shown in the cheat sheet and on the REFERENCE tab: a capital letter is a Shift press, so "T" reads
-// "SHIFT+t" (the key stays "T" in config.txt and while it is being edited); literal labels such as "SHIFT+T" or
-// "CTRL+SHIFT+Z" get the same lower-case letter.
+// "SHIFT+t" (the key stays "T" in config.txt and while it is being edited); literal labels such as "SHIFT+t" or
+// "CTRL+SHIFT+z" get the same lower-case letter.
 static std::string pretty_key(const std::string& k) {
     if (k == "@SWITCHKEY") return mode_switch_key_label();   // the mode-switch key, named for this keyboard (keyboard_layout.h)
     if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return std::string("SHIFT+") + static_cast<char>(k[0] + 32);
@@ -3790,8 +3790,8 @@ void App::handle_key(int key) {
                      : (list_source_ == ListSource::Folder) ? folder_view_.size()
                      : playlist_view_.size();
 
-    // Big list overlay (SHIFT+L): SHIFT+Up/Down turn a whole page, ESC closes
-    // it. Matched on the raw arrow codes + the shift flag, like SHIFT+B below
+    // Big list overlay (SHIFT+l): SHIFT+Up/Down turn a whole page, ESC closes
+    // it. Matched on the raw arrow codes + the shift flag, like SHIFT+b below
     // -- the input layer reports Shift+Up/Down as a plain 'A'/'B' arrow with
     // last_key_was_shifted() set, so there is no hotkey string for them. With
     // the overlay closed both keys fall through and behave exactly like plain
@@ -3803,7 +3803,7 @@ void App::handle_key(int key) {
         }
         if (key == 27) { list_overlay_close(); return; }
     }
-    // Big queue overlay (SHIFT+K): same keys as the list overlay above.
+    // Big queue overlay (SHIFT+k): same keys as the list overlay above.
     if (queue_overlay_active()) {
         if (last_key_was_arrow() && last_key_was_shifted() && (key == 'A' || key == 'B')) {
             queue_overlay_page(key == 'A' ? -1 : 1);
@@ -3818,7 +3818,7 @@ void App::handle_key(int key) {
     if (key == kKeyCtrlShiftZ) { queue_undo_clear(); return; }
     if (key == kKeyAltL) { if (mode_ == Mode::Browse) lyrics_edit_open(); return; } // lyrics timing overlay
 
-    // SHIFT+B -- AcoustID lookup of the hovered title (by audio fingerprint).
+    // SHIFT+b -- AcoustID lookup of the hovered title (by audio fingerprint).
     //
     // Deliberately matched on the raw key + last_key_was_arrow() instead of
     // going through settings_.hotkeys: the four arrow keys collapse to the
@@ -3840,7 +3840,7 @@ void App::handle_key(int key) {
             path = path_utf8(local_view_[selected_].path);
         }
         if (path.empty()) {
-            status_line_ = "SHIFT+B: only a local file can be fingerprinted";
+            status_line_ = "SHIFT+b: only a local file can be fingerprinted";
         } else {
             meta_prompt_single_fetch(path); // asks the AcoustID disclaimer first
         }
@@ -3868,7 +3868,7 @@ void App::handle_key(int key) {
     // SHIFT and the + key (the character '*' on a German keyboard): switch to the radio mode. Fixed key. Only here, in the
     // Browse view -- text fields and menus handled their keys above.
     if (key == '*' && !last_key_was_arrow()) { switch_mode_ = true; quit_ = true; return; }
-    // SHIFT+R: rescan the library (new files copied/uploaded while the app runs). Fixed key.
+    // SHIFT+r: rescan the library (new files copied/uploaded while the app runs). Fixed key.
     if (key == 'R' && !last_key_was_arrow()) { rescan_now(); return; }
     int lookup_key = (key == '\r') ? '\n' : key;
     std::string action = resolve_hotkey_action(lookup_key);
@@ -3883,27 +3883,27 @@ void App::handle_key(int key) {
         settings_col_ = 0;
     } else if (action == "HKeyPlaylist") {
         playlist_open_editor();
-    } else if (action == "HKeyMetaEditor") { // SHIFT+M: edit file names / tags, fetch metadata
+    } else if (action == "HKeyMetaEditor") { // SHIFT+m: edit file names / tags, fetch metadata
         meta_open();
-    } else if (action == "HKeyHistory") { // SHIFT+H: listening history (HISTORY / TOP TRACKS / HABITS)
+    } else if (action == "HKeyHistory") { // SHIFT+h: listening history (HISTORY / TOP TRACKS / HABITS)
         history_open();
-    } else if (action == "HKeyOscMenu") { // SHIFT+O: oscilloscope tuning overlay
+    } else if (action == "HKeyOscMenu") { // SHIFT+o: oscilloscope tuning overlay
         osci_menu_row_ = 0;
         mode_ = Mode::OsciMenu;
-    } else if (action == "HKeyNormMenu") { // SHIFT+V: loudness normalization overlay
+    } else if (action == "HKeyNormMenu") { // SHIFT+v: loudness normalization overlay
         norm_menu_row_ = 0;
         mode_ = Mode::NormMenu;
-    } else if (action == "HKeySleepTimer") { // SHIFT+Z: sleep timer overlay
+    } else if (action == "HKeySleepTimer") { // SHIFT+z: sleep timer overlay
         sleep_menu_row_ = sleep_stop_after_track_ ? 5
                         : sleep_timer_active_ ? (sleep_timer_minutes_ == 15 ? 0 : sleep_timer_minutes_ == 30 ? 1
                                                : sleep_timer_minutes_ == 60 ? 2 : sleep_timer_minutes_ == 90 ? 3 : 4)
                         : 0;
         mode_ = Mode::SleepTimer;
-    } else if (action == "HKeyEqualizer") { // SHIFT+E: equaliser overlay
+    } else if (action == "HKeyEqualizer") { // SHIFT+e: equaliser overlay
         eq_open();
-    } else if (action == "HKeyListOverlay") { // SHIFT+L: big list overlay on/off
+    } else if (action == "HKeyListOverlay") { // SHIFT+l: big list overlay on/off
         if (list_overlay_open_) list_overlay_close(); else list_overlay_open();
-    } else if (action == "HKeyQueueOverlay") { // SHIFT+K: big queue overlay on/off
+    } else if (action == "HKeyQueueOverlay") { // SHIFT+k: big queue overlay on/off
         if (queue_overlay_open_) queue_overlay_close(); else queue_overlay_open();
     } else if (action == "HKeySwitchBetweenCards") { // Tab: toggle Up/Down + reorder focus between the list and the queue
         // The queue pane is hidden behind the big list overlay and the queue
@@ -4023,7 +4023,7 @@ void App::handle_key(int key) {
             queue_add_selected();
             log_event("added to queue");
         }
-    } else if (action == "HKeyClearQueue") { // SHIFT+X: clear the whole queue, after a Yes/No confirmation
+    } else if (action == "HKeyClearQueue") { // SHIFT+x: clear the whole queue, after a Yes/No confirmation
         if (queue_.empty()) {
             status_line_ = "queue is already empty";
         } else {
@@ -4071,7 +4071,7 @@ void App::handle_key(int key) {
         }
         status_line_ = msg;
         log_event(msg);
-    } else if (action == "HKeyToggleMetaOnly") { // SHIFT+N: swap the lists between filename+metadata and metadata-only rows
+    } else if (action == "HKeyToggleMetaOnly") { // SHIFT+n: swap the lists between filename+metadata and metadata-only rows
         settings_.meta_only = !settings_.meta_only;
         std::string msg = settings_.meta_only ? "lists: metadata only (no filename)"
                                               : "lists: filename + metadata";
@@ -6465,7 +6465,7 @@ void App::meta_refresh_hover_values() {
     for (int i = 0; i < kMetaFieldCount; ++i) meta_hover_values_[i] = meta_display_value(path, i, e);
 }
 
-// SHIFT+R in the main UI and in the meta data editor.
+// SHIFT+r in the main UI and in the meta data editor.
 void App::rescan_now() {
     const size_t before = all_local_tracks_.size();
     rescan_library();
@@ -6799,7 +6799,7 @@ void App::handle_meta_key(int key) {
         meta_prompt_ = MetaPrompt::Discard;
         return;
     }
-    // SHIFT+B for the hovered title -- raw 'B' with no arrow behind it (see
+    // SHIFT+b for the hovered title -- raw 'B' with no arrow behind it (see
     // handle_key()'s Browse branch for why this can't be a normal hotkey).
     // Only fires while the current focus has no caret of its own to type
     // into: the library picker (focus 1) and the whole of tab 1's fetch
@@ -6814,7 +6814,7 @@ void App::handle_meta_key(int key) {
         return;
     }
 
-    // SHIFT+R: rescan the library (same rule as SHIFT+B: not while a text field has the caret).
+    // SHIFT+r: rescan the library (same rule as SHIFT+b: not while a text field has the caret).
     if (key == 'R' && !last_key_was_arrow() && (meta_tab_ == 1 || meta_focus_ == 1)) { rescan_now(); return; }
 
     // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
@@ -6878,9 +6878,9 @@ void App::handle_meta_key(int key) {
         // two navigation keys above already claimed -- so a plain Shift+A
         // typed here reaches this line.
         if (key == 'x') { meta_toggle_filter(1); return; } // only files with no metadata at all
-        if (key == 'T') { meta_toggle_filter(2); return; } // SHIFT+T: missing title
-        if (key == 'A') { meta_toggle_filter(3); return; } // SHIFT+A: missing artist
-        if (key == 'Y') { meta_toggle_filter(4); return; } // SHIFT+Y: missing year
+        if (key == 'T') { meta_toggle_filter(2); return; } // SHIFT+t: missing title
+        if (key == 'A') { meta_toggle_filter(3); return; } // SHIFT+a: missing artist
+        if (key == 'Y') { meta_toggle_filter(4); return; } // SHIFT+y: missing year
         if (key == kKeyDelete || key == 127 || key == 'd') { meta_remove_hovering(); return; }
         return; // every other printable key would be search input, and search lives in focus 0
     }
@@ -7321,14 +7321,14 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
         }
     } else {
         std::string hint = (meta_tab_ == 0)
-            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | [SHIFT+B] Fetch | [SHIFT+R] Rescan | "
-              "[r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit"
-            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | [SHIFT+R] Rescan | "
-              "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit";
+            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | [SHIFT+b] Fetch | [SHIFT+r] Rescan | "
+              "[r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+s] Save | [CTRL+SHIFT+x] Discard | [ESC] Exit"
+            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+b] Fetch this | [DEL] Remove | [SHIFT+r] Rescan | "
+              "[CTRL+SHIFT+s] Save | [CTRL+SHIFT+x] Discard | [ESC] Exit";
         // The legend is wider than the screen (tab 0: ~210 columns once the
         // selection/clipboard commands are in it, tab 1: 116), and
         // truncate_str(hint, W) used to cut it mid-command at 120 -- the
-        // [CTRL+SHIFT+X] Discard half of it was simply never shown. Split it
+        // [CTRL+SHIFT+x] Discard half of it was simply never shown. Split it
         // back into its " | "-separated entries and pack them greedily
         // instead: an entry only moves to the second legend row when the row
         // it would join is already full, so at 120 columns every command
@@ -7482,7 +7482,7 @@ void App::handle_history_key(int key) {
     if (key == 0) return;
     const bool arrow = last_key_was_arrow();
 
-    // Leaving: ESC, or SHIFT+H again -- the very key that opened this
+    // Leaving: ESC, or SHIFT+h again -- the very key that opened this
     // (nothing here is a text field, so an uppercase 'H' is always that key).
     if (key == 27 || (key == 'H' && !arrow)) { mode_ = Mode::Browse; return; }
 
@@ -7524,6 +7524,37 @@ void App::handle_history_key(int key) {
         if (arrow && key == 'A') { if (history_add_sel_ > 0) --history_add_sel_; return; }
         if (arrow && key == 'B') { if (history_add_sel_ < 3) ++history_add_sel_; return; }
         if (key == '\r' || key == '\n') { history_add_top_to_queue(kHistoryAddCounts[history_add_sel_]); return; }
+    }
+
+    // Enter on a track of the HISTORY / TOP TRACKS list: play it right away (the overlay stays open).
+    if (!arrow && (key == '\r' || key == '\n') && history_tab_ != 2) {
+        std::string id, title, artist;
+        const auto& plays = history_.plays();
+        if (history_tab_ == 0) {
+            const int n = static_cast<int>(std::min<size_t>(100, plays.size()));
+            if (history_selected_ >= 0 && history_selected_ < n) {
+                const HistoryPlay& p = plays[static_cast<size_t>(history_selected_)];
+                id = p.id; title = p.title; artist = p.artist;
+            }
+        } else if (history_selected_ >= 0 && history_selected_ < static_cast<int>(history_top_view_.size())) {
+            const HistoryTopRow& r = history_top_view_[static_cast<size_t>(history_selected_)];
+            id = r.id; title = r.title; artist = r.artist;
+        }
+        if (id.empty()) return;
+        if (artist == "-") artist.clear();
+        if (id.compare(0, 3, "yt:") == 0) {
+            OnlineResult r{id.substr(3), title, artist};
+            start_online_track(r);
+            history_status_ = "playing: " + title;
+        } else {
+            fs::path path = path_from_utf8(id);
+            std::error_code ec;
+            if (!fs::exists(path, ec)) { history_status_ = "cannot play: the file no longer exists"; return; }
+            LocalTrack t{path_utf8(path.stem()), path, artist};
+            start_local_track(t);
+            history_status_ = "playing: " + (title.empty() ? path_utf8(path.stem()) : title);
+        }
+        return;
     }
 
     // Up/Down: a cursor on the two list tabs, plain scrolling on Habits
@@ -7767,7 +7798,19 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
     // where the real content height is finally known).
     int start = 0;
     if (cursor >= 0) {
-        start = std::clamp(cursor - (body - 1) / 2, 0, std::max(0, static_cast<int>(lines.size()) - body));
+        // Same behaviour as the file list: the column header stays put and the window only moves when the
+        // cursor leaves it (no re-centering on every step).
+        const int hdr = cursor - history_selected_;                      // fixed lines above the rows
+        const int rows_total = static_cast<int>(lines.size()) - hdr;
+        const int vis = std::max(1, body - hdr);
+        int top = history_view_top_;
+        if (history_selected_ < top) top = history_selected_;
+        if (history_selected_ >= top + vis) top = history_selected_ - vis + 1;
+        top = std::clamp(top, 0, std::max(0, rows_total - vis));
+        history_view_top_ = top;
+        lines.erase(lines.begin() + hdr, lines.begin() + hdr + top);     // scroll the rows, keep the header
+        cursor -= top;
+        start = 0;
     } else {
         const int max_scroll = std::max(0, static_cast<int>(lines.size()) - body);
         history_scroll_ = std::clamp(history_scroll_, 0, max_scroll);
@@ -8285,8 +8328,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     y++;
 
     pos(y, 1, legend_sgr(settings_) + (settings_tab_ == 4
-        ? "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change key | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save & close | [ESC/q] Discard & close"
-        : "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [s] Save & close | [ESC/q] Discard & close") + "\x1b[0m");
+        ? "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save | [ESC/q] Discard"
+        : "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [s] Save | [ESC/q] Discard") + "\x1b[0m");
     y++;
     // The log/status line lives here now -- render_frame() deliberately no
     // longer prints it under the Browse list (an untruncated message there
@@ -8402,7 +8445,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     //   * a plain action name, looked up in settings_.hotkeys, so the key
     //     shown is whatever the user actually has bound (config.txt /
     //     rebound in Settings), never a hardcoded assumption; or
-    //   * '#'-prefixed: a literal key label. SHIFT+B, Ctrl+Shift+S/X, ESC,
+    //   * '#'-prefixed: a literal key label. SHIFT+b, Ctrl+Shift+S/X, ESC,
     //     the playlist/meta editors' own fixed navigation and text-editing
     //     keys, and friends are checked as raw key codes in handle_*_key()
     //     rather than looked up in settings_.hotkeys, so there is no hotkey
@@ -8473,8 +8516,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyQueueMoveBottom", "Move hovering queue item to the bottom"},
         {nullptr, "HKeyQueueLock", "Lock / unlock the queue (locked = default: played track goes to the end; unlocked: it leaves)"},
         {nullptr, "HKeyClearQueue", "Clear the whole queue (asks Yes / No first)"},
-        {nullptr, "#CTRL+SHIFT+Z", "Undo the last queue clear"},
-        {nullptr, "#CTRL+SHIFT+U", "Save the queue as a playlist (opens the playlist editor)"},
+        {nullptr, "#CTRL+SHIFT+z", "Undo the last queue clear"},
+        {nullptr, "#CTRL+SHIFT+u", "Save the queue as a playlist (opens the playlist editor)"},
         // --- Playlists -- HKeyPlaylist opens the overlay; every other row
         // is the playlist editor's own fixed legend (build_playlist_screen()'s
         // footer), none of which is a rebindable hotkey.
@@ -8499,17 +8542,17 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text (field editor)"},
         {nullptr, "#a", "Meta editor: add the hovering file to the fetch list"},
         {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
-        {nullptr, "#x / SHIFT+T / SHIFT+A / SHIFT+Y", "Filter library: missing any / title / artist / year"},
-        {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
-        {nullptr, "#SHIFT+R", "Rescan the library (new files); also in the meta data editor (library pane / fetch list focused)"},
+        {nullptr, "#x / SHIFT+t / SHIFT+a / SHIFT+y", "Filter library: missing any / title / artist / year"},
+        {nullptr, "#SHIFT+b", "Fetch metadata for the hovered title (AcoustID)"},
+        {nullptr, "#SHIFT+r", "Rescan the library (new files); also in the meta data editor (library pane / fetch list focused)"},
         {nullptr, "#DEL / d", "Remove hovering track from the fetch list"},
-        {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
-        {nullptr, "#CTRL+SHIFT+X", "Discard the meta editor's pending edits"},
+        {nullptr, "#CTRL+SHIFT+s", "Apply the meta editor's pending edits to the files"},
+        {nullptr, "#CTRL+SHIFT+x", "Discard the meta editor's pending edits"},
         // --- Settings (REFERENCE tab) ---
         {"SETTINGS (REFERENCE TAB)", "#ENTER", "Change the key of the selected command (type the new key, ENTER applies)"},
         {nullptr, "#DEL", "Restore the default key of the selected command"},
         {nullptr, "#ENTER on the first line", "Reset all keys to their defaults"},
-        {nullptr, "#CTRL+SHIFT+U", "Undo the last key change or reset (up to 5, newest first)"},
+        {nullptr, "#CTRL+SHIFT+u", "Undo the last key change or reset (up to 5, newest first)"},
         // --- Listening history ---
         {"HISTORY", "HKeyHistory", "Listening history: last plays, top tracks, habits"},
         {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
@@ -8601,7 +8644,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
 // grows to fill the terminal.
 
 // ---------------------------------------------------------------------
-// Big list overlay (HKeyListOverlay, SHIFT+L) -- see app.h for the design.
+// Big list overlay (HKeyListOverlay, SHIFT+l) -- see app.h for the design.
 // ---------------------------------------------------------------------
 
 namespace {
@@ -8691,8 +8734,8 @@ std::vector<std::string> App::queue_overlay_legend(int panel_w) const {
         "[" + join_keys(hotkey_text("HKeyQueueMoveUp", "4"), hotkey_text("HKeyQueueMoveDown", "5")) + "] move up/down",
         "[" + join_keys(hotkey_text("HKeyQueueMoveTop", "$"), hotkey_text("HKeyQueueMoveBottom", "%")) + "] move to top/bottom",
         "[" + hotkey_text("HKeyQueueLock", "!") + "] " + (queue_locked_ ? "unlock" : "lock"),
-        "[CTRL+SHIFT+U] queue to playlist",
-        "[CTRL+SHIFT+Z] undo clear",
+        "[CTRL+SHIFT+u] queue to playlist",
+        "[CTRL+SHIFT+z] undo clear",
         "[SHIFT+UP/DOWN] page",
         "[ESC] close",
     };
@@ -8802,7 +8845,7 @@ std::vector<std::string> App::build_list_overlay_panel(int panel_w, int list_row
 }
 
 // ---------------------------------------------------------------------
-// Big queue overlay (HKeyQueueOverlay, SHIFT+K) -- see app.h for the design.
+// Big queue overlay (HKeyQueueOverlay, SHIFT+k) -- see app.h for the design.
 // ---------------------------------------------------------------------
 
 // Shown in the same modes as the list overlay (the ones with the main UI
@@ -9101,7 +9144,7 @@ void App::rl_submit() {
     mode_ = Mode::Browse;
 }
 
-// Equaliser overlay (SHIFT+E).
+// Equaliser overlay (SHIFT+e).
 //
 // Presets are addressed by one "unified" index: 0 .. kEqPresets.size()-1 are
 // the built-in presets, everything after that is settings_.eq_custom_presets
@@ -9389,12 +9432,12 @@ std::vector<std::string> App::build_eq_panel() const {
     } else {
         lines.push_back(legend_row("[</>] band  [UP/DOWN] gain  [,/.] preset  [0] zero"));
         lines.push_back(legend_row("[S] save preset  [DEL/X] delete preset"));
-        lines.push_back(legend_bottom("[SPACE] on/off  [R] flat  [SHIFT+E / ESC] close"));
+        lines.push_back(legend_bottom("[SPACE] on/off  [R] flat  [SHIFT+e / ESC] close"));
     }
     return lines;
 }
 
-// Oscilloscope tuning overlay (SHIFT+O). The rows come from osci_visible_rows() (osci_settings.cpp): which ones are
+// Oscilloscope tuning overlay (SHIFT+o). The rows come from osci_visible_rows() (osci_settings.cpp): which ones are
 // shown depends on the style (braille / image). The ranges match what settings.cpp clamps on load.
 void App::osci_menu_adjust(int dir) {
     const std::vector<int> rows = osci_visible_rows(settings_);
@@ -9430,11 +9473,11 @@ std::vector<std::string> App::build_osci_menu_panel() const {
     }
     lines.push_back(row("", false));
     lines.push_back(row("[UP/DOWN] select  [LEFT/RIGHT] change", false));
-    lines.push_back(box_bottom(W, "[R] reset  [SHIFT+O / ESC] close", border_bottom));
+    lines.push_back(box_bottom(W, "[R] reset  [SHIFT+o / ESC] close", border_bottom));
     return lines;
 }
 
-// Loudness normalisation overlay (SHIFT+V). Rows: 0 on/off, 1 target level
+// Loudness normalisation overlay (SHIFT+v). Rows: 0 on/off, 1 target level
 // (LUFS), 2 max boost (dB). The ranges match what settings.cpp clamps on
 // load and what Player::set_normalization() accepts.
 namespace {
@@ -9533,7 +9576,7 @@ std::vector<std::string> App::build_norm_menu_panel() const {
     }
     lines.push_back(dim_row(live));
     lines.push_back(row("[UP/DOWN] select   [LEFT/RIGHT] change", false));
-    lines.push_back(box_bottom(W, "[SPACE] on/off  [R] reset  [SHIFT+V / ESC] close", border_bottom));
+    lines.push_back(box_bottom(W, "[SPACE] on/off  [R] reset  [SHIFT+v / ESC] close", border_bottom));
     return lines;
 }
 
@@ -10008,7 +10051,7 @@ std::string App::render_frame(TerminalIO& term) {
     // truly pathological values feeding into subtraction below.
     term_rows_ = std::max(term.rows(), 4);
 
-    // Big list overlay (SHIFT+L): size it against the real terminal every
+    // Big list overlay (SHIFT+l): size it against the real terminal every
     // frame -- before anything below scrolls/paints the list -- so
     // list_nav_rows() (which every scroll-follows-the-cursor calculation
     // asks) already reflects the overlay's row count, and re-anchor the
@@ -10018,7 +10061,7 @@ std::string App::render_frame(TerminalIO& term) {
         list_overlay_geometry(W, overlay_panel_w, overlay_list_rows_);
         list_overlay_fit_scroll(overlay_list_rows_);
     }
-    // Big queue overlay (SHIFT+K): same per-frame sizing for the queue window.
+    // Big queue overlay (SHIFT+k): same per-frame sizing for the queue window.
     // (Never open together with the list overlay, so they can share overlay_panel_w.)
     if (queue_overlay_active()) {
         queue_overlay_geometry(W, overlay_panel_w, overlay_queue_rows_);
@@ -10136,7 +10179,7 @@ std::string App::render_frame(TerminalIO& term) {
     auto metadata_lines = build_metadata_panel(W);
     auto progress_lines = build_progress_panel(W);
     auto search_lines = build_search_bar(W);
-    // The AcoustID confirmation raised by SHIFT+B lives in Browse's
+    // The AcoustID confirmation raised by SHIFT+b lives in Browse's
     // status area too (there is no footer here), but the disclaimer alone is
     // 110 characters -- wider than many terminals -- so instead of trusting
     // one physical line to hold it (which would wrap in the terminal and
@@ -10173,7 +10216,7 @@ std::string App::render_frame(TerminalIO& term) {
     // clamp_output_rows() keeps term_rows_ - 1 lines, so those last 2 lines
     // -- blank + status/loading -- were chopped off every single frame: no
     // Browse message ever reached the screen at all ("added to queue",
-    // "queued 3 tracks", the SHIFT+B AcoustID question, ...). The blank
+    // "queued 3 tracks", the SHIFT+b AcoustID question, ...). The blank
     // line is gone (the last row sits directly under the list box now),
     // and the box's 2 border rows are subtracted from the room the list may
     // use, so the frame ends up exactly term_rows_ - 1 lines tall with the

@@ -132,7 +132,7 @@ private:
     int term_rows_ = 24;
     int list_visible_rows_ = kListVisibleRows;
 
-    // --- list overlay (HKeyListOverlay, SHIFT+L) -------------------------
+    // --- list overlay (HKeyListOverlay, SHIFT+l) -------------------------
     // A large floating copy of the list pane (LOCAL AUDIO FILES when the
     // local library is showing), drawn over the main UI like the Retry
     // Lyrics form. It is NOT a Mode: it stays a plain flag on top of
@@ -161,7 +161,7 @@ private:
     std::vector<std::string> build_list_overlay_panel(int panel_w, int list_rows) const;
     std::string clamp_output_rows(const std::string& frame, int term_rows) const;
 
-    // --- queue overlay (HKeyQueueOverlay, SHIFT+K) -----------------------
+    // --- queue overlay (HKeyQueueOverlay, SHIFT+k) -----------------------
     // The same idea as the list overlay above, for the QUEUE pane: a large
     // floating copy drawn over the main UI. Also a plain flag (not a Mode),
     // so every queue command (move, remove, bulk add, clear, playback keys)
@@ -413,6 +413,7 @@ private:
     int history_tab_ = 0;              // 0=History, 1=Top Tracks, 2=Habits
     int history_selected_ = 0;         // cursor within tabs 0/1
     int history_scroll_ = 0;           // manual scroll offset (tab 2's content)
+    int history_view_top_ = 0;         // first visible list row on tabs 0/1 (window moves only when the cursor leaves it)
     bool history_most_first_ = true;   // 'r' on the Top Tracks tab
     std::vector<HistoryTopRow> history_top_view_; // rebuilt by history_refresh_top()
     std::string history_status_;       // footer status line, set by 'r' / the queue adds

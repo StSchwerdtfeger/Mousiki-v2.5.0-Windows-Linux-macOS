@@ -339,14 +339,14 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyToggleMetaOnly",              "N"},
             // Shift+M: the meta/tag editor overlay. Same uppercase trick as
             // HKeyToggleMetaOnly above -- plain "m" stays HKeyCyclePlayMode.
-            // (SHIFT+B, "fetch metadata for the hovered title", is NOT a
+            // (SHIFT+b, "fetch metadata for the hovered title", is NOT a
             // hotkey: "B" is indistinguishable from the Down-arrow's
             // collapsed 'B' code by value alone, so it is matched directly
             // in handle_key() together with last_key_was_arrow() instead.)
             {"HKeyMetaEditor",                  "M"},
             // Shift+H: the listening-history overlay (HISTORY / TOP TRACKS
             // / HABITS). Same uppercase convention as M and P above --
-            // nothing claimed plain "h", but SHIFT+H is what the overlay is
+            // nothing claimed plain "h", but SHIFT+h is what the overlay is
             // entered with.
             {"HKeyHistory",                     "H"},
             // Shift+X: clear the whole queue (after a Yes/No confirmation).
@@ -1102,7 +1102,7 @@ static void write_settings(std::ostream& out, const Settings& s) {
     out << "## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)\n";
     out << "## Pick it live from this tab's \"Lyric Viz\" row (replaces the old LyricsPlaceholderBall on/off).\n";
     osci_config_write(out, s);
-    out << "## Tune all of these live with SHIFT+O in the main UI\n";
+    out << "## Tune all of these live with SHIFT+o in the main UI\n";
     out << "Visualizer=" << tf(s.element_visualizer) << "\n";
     out << "MetaDataOnly=" << tf(s.meta_only) << "\n";
     out << "## true  = the (search-)lists show embedded metadata only -- the title tag is used\n";
@@ -1160,7 +1160,7 @@ static void write_settings(std::ostream& out, const Settings& s) {
     out << "## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.\n";
     out << "## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.\n";
     out << "## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.\n";
-    out << "## Tune all three live with SHIFT+V in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)\n";
+    out << "## Tune all three live with SHIFT+v in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)\n";
     out << "\n";
 
     out << "##-------------------------------------------\n";

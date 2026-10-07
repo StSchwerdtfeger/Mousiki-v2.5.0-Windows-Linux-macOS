@@ -11,7 +11,7 @@ namespace muisc {
 
 namespace fs = std::filesystem;
 
-// Palettes of the oscilloscope (Color row of the SHIFT+O overlay). 0 = the VIZ gradient of the COLORS tab laid over the
+// Palettes of the oscilloscope (Color row of the SHIFT+o overlay). 0 = the VIZ gradient of the COLORS tab laid over the
 // picture from left to right; the others colour by the beam speed (about the pitch: slow = first colour, fast = last colour).
 constexpr int kOsciPaletteCount = 8;
 extern const char* const kOsciPaletteNames[kOsciPaletteCount];   // gradient, settings, temperature, aurora, magma, ice, neon, spectrum
@@ -53,7 +53,7 @@ struct Settings {
     // the panel now always shows one of the two and this row picks
     // which, from the ON/OFF tab's "Lyric Viz" entry.
     int lyric_viz = 0;
-    // Oscilloscope look, tuned live from the SHIFT+O overlay in the main UI (config.txt: Osci* / OsciImage*).
+    // Oscilloscope look, tuned live from the SHIFT+o overlay in the main UI (config.txt: Osci* / OsciImage*).
     // Each style (braille / image) keeps its own parameter set; osci() is the one in use.
     OsciSet osci_set[2];                // [0] = braille, [1] = image
     int osci_style = 0;                 // 0 = braille characters, 1 = image (a real pixel picture: Kitty graphics / Sixel)
@@ -359,7 +359,7 @@ void save_settings(const Settings& s);
 // The text save_settings() would write (used to tell whether the settings screen changed anything).
 std::string settings_to_text(const Settings& s);
 
-// ---- the SHIFT+O overlay (osci_settings.cpp) ----
+// ---- the SHIFT+o overlay (osci_settings.cpp) ----
 enum OsciRow { kOrDecay, kOrDot, kOrTail, kOrInterp, kOrZ, kOrZDepth, kOrZSource, kOrTrace, kOrRotate, kOrMono, kOrPalette, kOrGlow,
                kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOsciRowCount };
 std::vector<int> osci_visible_rows(const Settings& s);          // the rows the overlay shows for the style in use

@@ -6,7 +6,7 @@
 #include <ostream>
 #include <sstream>
 
-// The oscilloscope's settings: the rows of the SHIFT+O overlay (labels, values, stepping), the per-style parameter sets and
+// The oscilloscope's settings: the rows of the SHIFT+o overlay (labels, values, stepping), the per-style parameter sets and
 // their config.txt keys. Shared in spirit with the radio mode (radio_settings.cpp), which has the same rows.
 
 namespace muisc {
@@ -159,7 +159,7 @@ void osci_config_write(std::ostream& out, const Settings& s) {
             << P << "Palette=" << kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)] << "\n"
             << P << "Glow=" << num(o.glow) << "\n";
     };
-    out << "## Oscilloscope (SHIFT+O overlay), one block per style: braille = Osci<name>, image = OsciImage<name>. Each style keeps its own values.\n";
+    out << "## Oscilloscope (SHIFT+o overlay), one block per style: braille = Osci<name>, image = OsciImage<name>. Each style keeps its own values.\n";
     out << "## Decay = afterglow 0.00-0.99 | DotThreshold 0.01-1.00 (braille: lower = thicker line) | TailBrightness 0.00-1.00 | Interpolation = connect the\n";
     out << "## samples with lines | ZAxis = beam intensity (ZDepth 0-1, ZSource speed|level) | TraceLength 128-1024 samples | Rotate = 45 degrees (mid vertical) |\n";
     out << "## MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom)\n";
