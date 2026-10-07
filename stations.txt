@@ -1,0 +1,19 @@
+# Mousiki radio mode -- station list
+# Copy to ~/.config/mousiki/stations.txt (Windows: %USERPROFILE%\.config\mousiki\stations.txt)
+# or leave it next to the executable.
+#
+# name | genre | country | codec | bitrate kbps | url | [*] favorite | [dial MHz]
+#
+#  * a trailing "*" makes the station a DEFAULT preset (keys 1234567890ertdfg, in file order). Only used until
+#    ~/.config/mousiki/presets.txt exists -- after that the PRESETS menu (P) owns the presets
+#  * the dial MHz is only decoration (position on the frequency band); leave it out and
+#    one is derived from the name
+#  * url "lavfi:chords" / "lavfi:tone" / "lavfi:noise" are offline test signals made by ffmpeg
+#
+Radio Paradise         | Eclectic Rock    | US | AAC | 128 | https://stream.radioparadise.com/aac-128 | *
+SomaFM Groove Salad    | Ambient / Chill  | US | MP3 | 128 | https://ice1.somafm.com/groovesalad-128-mp3 | *
+SomaFM Indie Pop Rocks | Indie            | US | MP3 | 128 | https://ice1.somafm.com/indiepop-128-mp3
+Deutschlandfunk        | Info / Culture   | DE | MP3 | 128 | https://st01.sslstream.dlf.de/dlf/01/128/mp3/stream.mp3 | *
+TEST Stereo Chords     | Test signal      | -- | PCM |   0 | lavfi:chords | *
+TEST Sine 440 Hz       | Test signal      | -- | PCM |   0 | lavfi:tone
+TEST Pink Noise        | Test signal      | -- | PCM |   0 | lavfi:noise

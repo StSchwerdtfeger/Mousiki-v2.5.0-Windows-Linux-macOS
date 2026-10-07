@@ -3,8 +3,8 @@
 # setup.sh -- Linux / macOS equivalent of setup.ps1: installs mousiki's build
 # and runtime dependencies, then configures and builds it.
 #
-# mousiki itself is a C++17 binary, but it shells out to three external tools
-# at runtime:
+# mousiki itself is a C++17 binary (the music player AND the radio mode, one program;
+# SHIFT and + switches between them), but it shells out to a few external tools at runtime:
 #
 #   ffmpeg  - decodes Opus (miniaudio's built-in decoders don't cover it, and
 #             Opus is exactly what the yt-dlp cache stores), supplies ffprobe
@@ -15,8 +15,16 @@
 #             package) and scripts/fetch_meta.py (AcoustID metadata fetch,
 #             which drives fpcalc -- built by CMake from third_party/chromaprint/).
 #
-# All three are independent of each other: mousiki plays local files fine with
-# none of them installed.
+# and, for the radio mode only:
+#
+#   curl    - asks the Radio Browser directory (SHIFT+S in the radio) for stations.
+#   ffmpeg  - (the same one as above) also streams the stations and, with libmp3lame,
+#             converts recordings to MP3. The radio plays through its own audio device.
+#
+# All of these are independent of each other: mousiki plays local files fine with
+# none of them installed. The radio is built from src_radio/ and runs on Linux and macOS
+# like the player (developed and tested on Linux; the macOS path is the same POSIX code
+# but untested here).
 #
 # Usage:
 #   ./setup.sh [options]
@@ -193,19 +201,20 @@ install_deps() {
     fi
 
     # Work out what is missing, so that nothing is touched if everything is there.
-    local need_compiler=0 need_cmake=0 need_ffmpeg=0 need_ytdlp=0 need_python=0 need_audio=0
+    local need_compiler=0 need_cmake=0 need_ffmpeg=0 need_ytdlp=0 need_python=0 need_audio=0 need_curl=0
     if ! have c++ && ! have g++ && ! have clang++; then need_compiler=1; fi
     have cmake   || need_cmake=1
     have ffmpeg  || need_ffmpeg=1
     have ffprobe || need_ffmpeg=1
     have yt-dlp  || need_ytdlp=1
     have python3 || need_python=1
+    have curl    || need_curl=1     # radio mode: Radio Browser search
     # ALSA/PulseAudio: miniaudio dlopen()s them at runtime, so there is no
     # reliable "is it installed" test that doesn't depend on the distro.
     # Installing the (tiny) dev packages is idempotent and guarantees both.
     [ "$PLATFORM" = "linux" ] && need_audio=1
 
-    if [ $((need_compiler + need_cmake + need_ffmpeg + need_ytdlp + need_python + need_audio)) -gt 0 ]; then
+    if [ $((need_compiler + need_cmake + need_ffmpeg + need_ytdlp + need_python + need_audio + need_curl)) -gt 0 ]; then
         confirm_install || { warn "skipping package installation at your request."; return 0; }
     fi
 
@@ -249,6 +258,12 @@ install_deps() {
         else
             pkg_install ffmpeg || warn "FFmpeg installation failed -- Opus playback, metadata and AcoustID will not work"
         fi
+    fi
+
+    # --- curl (radio mode) ----------------------------------------------------
+    if [ "$need_curl" -eq 1 ]; then
+        step "Installing curl (radio mode: station search)"
+        pkg_install curl || warn "could not install curl -- the radio's RADIO BROWSER search (SHIFT+S) will not work"
     fi
 
     # --- python3 -------------------------------------------------------------
@@ -357,6 +372,15 @@ elif [ ! -x "$EXE_DIR/scripts/fpcalc" ]; then
     warn "fpcalc was not built -- the AcoustID metadata fetch will not work."
 fi
 
+# Radio mode: its default stations.txt / radio_config.txt are copied next to the executable by CMake.
+if [ ! -f "$EXE_DIR/stations.txt" ] || [ ! -f "$EXE_DIR/radio_config.txt" ]; then
+    warn "stations.txt or radio_config.txt were not copied next to the executable -- the radio starts with its built-in defaults."
+fi
+# Recording in the radio converts to MP3 through ffmpeg's libmp3lame.
+if have ffmpeg && ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3lame; then
+    warn "your ffmpeg has no libmp3lame encoder -- recording a radio stream to MP3 will fail (everything else works)."
+fi
+
 # ---------------------------------------------------------------------------
 # Optional launcher
 # ---------------------------------------------------------------------------
@@ -381,7 +405,9 @@ echo "Run it with:  '$EXE'"
 [ "$DO_INSTALL" -eq 1 ] && echo "or simply:    mousiki"
 echo
 echo "Config will be generated at: \$HOME/.config/mousiki/config.txt"
-echo "Keep the scripts/ folder next to the executable if you move it."
+echo "Radio mode settings: \$HOME/.config/mousiki/radio_config.txt (a default ships as radio_config.txt in the project folder)."
+echo "Switch between the music player and the radio with SHIFT and the + key (the * character)."
+echo "Keep the scripts/ folder (and stations.txt / radio_config.txt) next to the executable if you move it."
 if [ "$PLATFORM" = "linux" ]; then
     echo "Audio goes through PulseAudio/PipeWire-pulse or ALSA; use a UTF-8 terminal."
 fi

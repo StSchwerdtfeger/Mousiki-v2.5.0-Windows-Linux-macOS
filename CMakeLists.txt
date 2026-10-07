@@ -12,6 +12,7 @@ endif()
 # Third-party code — vendored in third_party/, so configuring needs no network.
 #   miniaudio.h         : single-file audio library (public domain / MIT-0), v0.11.25
 #   kissfft/            : small real-input FFT for the spectrum visualizer (BSD-3-Clause)
+#   miniz/              : deflate (MIT / public domain), compresses the oscilloscope picture sent over Kitty graphics
 #   chromaprint/        : AcoustID fingerprinting library, 1.6.1 (MIT/LGPL-2.1) —
 #                         compiled into the fpcalc helper below, which is why the
 #                         project needs neither a prebuilt fpcalc.exe nor any
@@ -54,9 +55,16 @@ endif()
 file(GLOB_RECURSE MUISC_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp")
 set(KISSFFT_SOURCES "${KISSFFT_DIR}/kiss_fft.c" "${KISSFFT_DIR}/kiss_fftr.c")
 set_source_files_properties(${KISSFFT_SOURCES} PROPERTIES LANGUAGE C)
+# miniz: the deflate used to compress the oscilloscope picture for Kitty graphics (src/terminal_gfx.cpp)
+set(MINIZ_DIR "${CMAKE_SOURCE_DIR}/third_party/miniz")
+if(NOT EXISTS "${MINIZ_DIR}/miniz.c")
+  message(FATAL_ERROR "Missing ${MINIZ_DIR}/miniz.c — third_party/ is part of the repository; restore it (e.g. `git checkout -- third_party`).")
+endif()
+set(MINIZ_SOURCES "${MINIZ_DIR}/miniz.c")
+set_source_files_properties(${MINIZ_SOURCES} PROPERTIES LANGUAGE C)
 
-add_executable(mousiki ${MUISC_SOURCES} ${KISSFFT_SOURCES})
-target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src" "${MINIAUDIO_DIR}" "${KISSFFT_DIR}")
+add_executable(mousiki ${MUISC_SOURCES} ${KISSFFT_SOURCES} ${MINIZ_SOURCES})
+target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src" "${MINIAUDIO_DIR}" "${KISSFFT_DIR}" "${MINIZ_DIR}")
 
 # ---------------------------------------------------------------------------
 # App icon (Windows only): mousiki.rc + mousiki.ico in the source root -- the
@@ -176,6 +184,69 @@ if(TARGET fpcalc_tool)
       COMMAND ${CMAKE_COMMAND} -E copy_if_different
               "$<TARGET_FILE:fpcalc_tool>"
               "$<TARGET_FILE_DIR:mousiki>/scripts/$<TARGET_FILE_NAME:fpcalc_tool>")
+endif()
+
+
+# ---------------------------------------------------------------------------
+# Radio mode (src_radio/): part of the SAME program as the music player. Ctrl+Shift+M ends the running mode
+# completely (audio device, threads, caches) and starts the other one -- see src/main.cpp and src/mode_switch.h.
+# The radio has its own audio path (ffmpeg -> ring buffer -> its own miniaudio device) and shares only the UI
+# plumbing (settings, terminal I/O, process spawning) and the visualizers with the player -- not Player, not
+# StreamingPcm. Its data files (stations.txt, radio_config.txt) now live in the project root.
+# ---------------------------------------------------------------------------
+file(GLOB RADIO_MODE_SOURCES CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src_radio/*.cpp")
+list(FILTER RADIO_MODE_SOURCES EXCLUDE REGEX "radio_standalone\\.cpp$")
+if(NOT RADIO_MODE_SOURCES)
+  message(FATAL_ERROR "src_radio/ is missing: the radio mode's sources belong in src_radio/ (see CMakeLists.txt).")
+endif()
+target_sources(mousiki PRIVATE ${RADIO_MODE_SOURCES})
+target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src_radio")
+# MA_ENABLE_NULL: lets MOUSIKI_RADIO_NULL=1 run the radio headless (tests, CI).
+target_compile_definitions(mousiki PRIVATE MA_ENABLE_NULL=1)
+if(EXISTS "${CMAKE_SOURCE_DIR}/stations.txt")
+  add_custom_command(TARGET mousiki POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/stations.txt"
+              "$<TARGET_FILE_DIR:mousiki>/stations.txt")
+endif()
+# radio_config.txt: the radio's OWN settings (colours), separate from the player's config.txt.
+if(EXISTS "${CMAKE_SOURCE_DIR}/radio_config.txt")
+  add_custom_command(TARGET mousiki POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/radio_config.txt"
+              "$<TARGET_FILE_DIR:mousiki>/radio_config.txt")
+endif()
+
+# Optional stand-alone radio executable (development / tests): the radio only, no mode switch.
+option(MOUSIKI_BUILD_RADIO_STANDALONE "Also build the radio as its own executable (mousiki_radio)" OFF)
+if(MOUSIKI_BUILD_RADIO_STANDALONE)
+  set(RADIO_SOURCES ${RADIO_MODE_SOURCES} src_radio/radio_standalone.cpp
+      src/history.cpp src/cache_manager.cpp src/youtube_source.cpp src/online_source.cpp
+      src/terminal_ui.cpp src/sphere_visualizer.cpp src/indic_handler.cpp src/process_util.cpp src/console_log.cpp
+      src/fft_visualizer.cpp src/audio_backend.cpp src/miniaudio_impl.cpp src/keyboard_layout.cpp)
+  if(WIN32)
+    list(APPEND RADIO_SOURCES src/win_compat.cpp)
+  endif()
+  add_executable(mousiki_radio ${RADIO_SOURCES} ${KISSFFT_SOURCES} ${MINIZ_SOURCES})
+  target_include_directories(mousiki_radio PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src_radio"
+                             "${MINIAUDIO_DIR}" "${KISSFFT_DIR}" "${MINIZ_DIR}")
+  target_link_libraries(mousiki_radio PRIVATE Threads::Threads)
+  # MA_ENABLE_NULL: lets MOUSIKI_RADIO_NULL=1 run the radio headless (tests, CI).
+  if(ANDROID)
+    target_compile_definitions(mousiki_radio PRIVATE MUISC_PLATFORM_ANDROID=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_OPENSL=1 MA_ENABLE_NULL=1)
+    target_link_libraries(mousiki_radio PRIVATE OpenSLES log android)
+  elseif(WIN32)
+    target_compile_definitions(mousiki_radio PRIVATE MUISC_PLATFORM_WINDOWS=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_WASAPI=1 MA_ENABLE_NULL=1
+                               NOMINMAX WIN32_LEAN_AND_MEAN _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS _CRT_NONSTDC_NO_WARNINGS)
+    target_link_libraries(mousiki_radio PRIVATE ole32 winmm)
+    if(MSVC)
+      target_compile_options(mousiki_radio PRIVATE /utf-8 /EHsc /W3)
+    endif()
+  elseif(APPLE)
+    target_compile_definitions(mousiki_radio PRIVATE MUISC_PLATFORM_MACOS=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_COREAUDIO=1 MA_ENABLE_NULL=1)
+    target_link_libraries(mousiki_radio PRIVATE "-framework CoreAudio" "-framework AudioToolbox" "-framework CoreFoundation" "-framework AudioUnit")
+  else()
+    target_compile_definitions(mousiki_radio PRIVATE MUISC_PLATFORM_LINUX=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_PULSEAUDIO=1 MA_ENABLE_ALSA=1 MA_ENABLE_NULL=1)
+    target_link_libraries(mousiki_radio PRIVATE dl m)
+  endif()
 endif()
 
 message(STATUS "mousiki: building for ${CMAKE_SYSTEM_NAME}")
