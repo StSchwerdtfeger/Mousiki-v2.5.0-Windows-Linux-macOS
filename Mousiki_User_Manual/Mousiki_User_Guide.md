@@ -320,7 +320,7 @@ Two starting points for the braille style: for a crisp, "real oscilloscope" look
 
 ![Oscillator overlay with the sphere](images/Playback_Main_UI_OSCI_MENU.png)
 
-![Oscillator overlay with the sphere](images/Playback_Main_UI_OSCI_MENU2.png)
+![Oscillator overlay with the sphere](images/Playback_Main_UI_OSCI_MENU_2.png)
 
 
 ### Loudness normalization overlay (`SHIFT+v`)
