@@ -122,7 +122,7 @@ bool save_preset_names(const std::vector<Station>& all) {
     if (p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
     std::ofstream o(p, std::ios::trunc);
     if (!o) return false;
-    o << "# Mousiki radio -- second names for the PRESETS pane: url<TAB>name (edited with SHIFT+C in the stations overlay)\n";
+    o << "# Mousiki radio -- second names for the PRESETS pane: url<TAB>name (edited with SHIFT+c in the stations overlay)\n";
     for (const auto& st : all)
         if (!st.preset_name.empty()) o << st.url << '\t' << st.preset_name << '\n';
     return static_cast<bool>(o);

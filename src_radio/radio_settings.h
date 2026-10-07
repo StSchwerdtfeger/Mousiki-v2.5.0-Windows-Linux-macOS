@@ -93,10 +93,10 @@ struct RadioSettings {
     int scope_mode = 0;                         // right of the station info: 0 = oscilloscope, 1 = sphere, 2 = off
     bool element_visualizer = true;             // the FFT spectrum under the station info
     bool stereo = true;                         // false = fold left + right to mono
-    bool normalize = true;                      // loudness normalisation (SHIFT+V overlay, `v` toggles)
+    bool normalize = true;                      // loudness normalisation (SHIFT+v overlay, `v` toggles)
     double normalize_target_lufs = -16.0;       // -40 .. 0
     double normalize_max_boost_db = 9.0;        // 0 .. 24
-    // Equaliser (SHIFT+E overlay): the player's 10-band EQ with its presets; own values, saved in radio_config.txt.
+    // Equaliser (SHIFT+e overlay): the player's 10-band EQ with its presets; own values, saved in radio_config.txt.
     bool eq_enabled = false;
     EqGains eq_gains = {};
     std::vector<EqCustomPreset> eq_custom_presets;
@@ -109,7 +109,7 @@ struct RadioSettings {
     std::string download_path;                  // recordings (y) + YouTube downloads go to <path>/radio_downloads
     bool download_same_as_player = true;        // true: use the music player's download folder instead
     std::string history_path;                   // <path>/radio_history/history_radio.txt
-    // --- sleep timer (SHIFT+Z overlay) and the REFERENCE tab ------------------------------------------
+    // --- sleep timer (SHIFT+z overlay) and the REFERENCE tab ------------------------------------------
     bool tune_noise = false;                    // ON/OFF tab: static that fades in / out when another station is tuned
     bool sleep_fade = true;                     // the sleep timer fades the volume out before it stops the stream
     std::map<std::string, std::string> keys;    // rebound keys by action id (kKeyActions); absent = the default
@@ -212,7 +212,7 @@ StoragePaths resolve_storage_paths(const RadioSettings& s);
 std::string player_download_folder();
 std::filesystem::path radio_default_dir();                           // ~/.config/mousiki
 
-// ---- the SHIFT+O (oscilloscope) and SHIFT+V (loudness) overlays: same knobs and ranges as the music player's ----
+// ---- the SHIFT+o (oscilloscope) and SHIFT+v (loudness) overlays: same knobs and ranges as the music player's ----
 struct Knob { const char* label; double lo, hi, step; };
 constexpr Knob kOsciKnobs[3] = {{"Decay", 0.00, 0.99, 0.01}, {"Dot threshold", 0.01, 1.00, 0.01}, {"Tail", 0.00, 1.00, 0.02}};
 // Overlay rows (ids). Which of them are shown depends on the style: osci_visible_rows().

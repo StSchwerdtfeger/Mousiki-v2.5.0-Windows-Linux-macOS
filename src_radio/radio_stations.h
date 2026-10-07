@@ -17,7 +17,7 @@ struct Station {
     std::string url;          // http(s) stream URL, or "lavfi:<name>" for the offline test signals
     bool favorite = false;    // "*" in stations.txt: only the DEFAULT presets (used until presets.txt exists)
     double dial_mhz = 0.0;    // decorative position on the frequency band (87.5 .. 108.0)
-    std::string preset_name;  // optional second, shorter name shown in the PRESETS pane (SHIFT+C in the big stations overlay); empty = use `name`
+    std::string preset_name;  // optional second, shorter name shown in the PRESETS pane (SHIFT+c in the big stations overlay); empty = use `name`
 
     const std::string& preset_label() const { return preset_name.empty() ? name : preset_name; }
     bool synthetic() const { return url.rfind("lavfi:", 0) == 0; }

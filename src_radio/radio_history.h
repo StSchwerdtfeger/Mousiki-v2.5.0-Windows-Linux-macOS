@@ -1,5 +1,5 @@
 #pragma once
-// Radio mode -- listening history (SHIFT+H menu: HISTORY / TOP CHANNELS / HABITS).
+// Radio mode -- listening history (SHIFT+h menu: HISTORY / TOP CHANNELS / HABITS).
 //
 // Modelled on the music player's history.* but for a live stream, where there are no "plays" but a channel and an
 // ICY title that changes: ONE LINE per (channel, artist, title). A new line starts when the channel, the artist or

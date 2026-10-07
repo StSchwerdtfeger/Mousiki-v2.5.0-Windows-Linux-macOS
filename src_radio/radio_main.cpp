@@ -156,7 +156,7 @@ struct Ui {
         for (const auto& l : model.lists) if (l.name == model.active_list) return &l;
         return nullptr;
     }
-    // Sorts station indices by name (case-insensitive, stable) -- the SHIFT+T "A-Z" order. Without `az` the
+    // Sorts station indices by name (case-insensitive, stable) -- the SHIFT+t "A-Z" order. Without `az` the
     // order stays what filter() produced: the list order, i.e. the order the stations were added.
     void sort_by_name(std::vector<int>& v, bool az) const {
         if (!az) return;
@@ -173,7 +173,7 @@ struct Ui {
         sort_by_name(model.visible, model.sort_az);
         model.cursor = std::clamp(model.cursor, 0, std::max(0, static_cast<int>(model.visible.size()) - 1));
     }
-    // SHIFT+T in the main UI: flips the sort and keeps the cursor on the same station.
+    // SHIFT+t in the main UI: flips the sort and keeps the cursor on the same station.
     void toggle_sort() {
         const int keep = (model.cursor >= 0 && model.cursor < static_cast<int>(model.visible.size())) ? model.visible[static_cast<size_t>(model.cursor)] : -1;
         model.sort_az = !model.sort_az;
@@ -436,7 +436,7 @@ int radio_main(int argc, char** argv) {
         print_plain(frame);
         return check_geometry(frame, ui.model) ? 0 : 2;
     }
-    if (mode == "--dump-overlay") {   // --dump-overlay [1|2]: the main screen with the SHIFT+O / SHIFT+V overlay
+    if (mode == "--dump-overlay") {   // --dump-overlay [1|2]: the main screen with the SHIFT+o / SHIFT+v overlay
         apply_test_size(ui.model);
         ui.model.overlay = argc > 2 ? std::atoi(argv[2]) : 1;
         auto frame = render_radio_frame(ui.model, engine.status(), engine, cfg);
@@ -606,23 +606,40 @@ int radio_main(int argc, char** argv) {
         if (vis_pos < 0 || vis_pos >= static_cast<int>(ui.model.visible.size())) return;
         tune_to(ui.model.visible[static_cast<size_t>(vis_pos)]);
     };
+    // The channels `n` / `b` / `#` surf through: the stations of the station list shown in the STATIONS pane
+    // (in the list's own order), or all stations when no list is shown.
+    auto surf_pool = [&]() {
+        std::vector<int> pool;
+        const int total = static_cast<int>(ui.stations.size());
+        if (const StationList* al = ui.active_list_ptr()) {
+            for (int i : al->items) if (i >= 0 && i < total) pool.push_back(i);
+        } else {
+            for (int i = 0; i < total; ++i) pool.push_back(i);
+        }
+        return pool;
+    };
     auto tune_relative = [&](int delta) {
-        const int n = static_cast<int>(ui.stations.size());
+        const std::vector<int> pool = surf_pool();
+        const int n = static_cast<int>(pool.size());
         if (n == 0) return;
-        int cur = engine.status().tuned_index;
-        cur = (cur < 0) ? (delta > 0 ? -1 : 0) : cur;
-        tune_to(((cur + delta) % n + n) % n);
+        const int tuned = engine.status().tuned_index;
+        int pos = -1;
+        for (int i = 0; i < n; ++i) if (pool[static_cast<size_t>(i)] == tuned) { pos = i; break; }
+        if (pos < 0) pos = delta > 0 ? -1 : 0;     // not in the pool: n starts at its first, b at its last channel
+        tune_to(pool[static_cast<size_t>(((pos + delta) % n + n) % n)]);
     };
     // '#': shuffle next -- always a random station (never the one already tuned), whatever the S/L mode is.
     std::mt19937 rng{std::random_device{}()};
     auto tune_shuffle = [&]() {
-        const int n = static_cast<int>(ui.stations.size());
+        const std::vector<int> pool = surf_pool();
+        const int n = static_cast<int>(pool.size());
         if (n == 0) return;
-        if (n == 1) { tune_to(0); return; }
+        if (n == 1) { tune_to(pool[0]); return; }
         const int cur = engine.status().tuned_index;
-        int next = std::uniform_int_distribution<int>(0, n - 2)(rng);   // n-1 candidates: every station but `cur`
-        if (cur >= 0 && next >= cur) ++next;
-        tune_to(next);
+        std::vector<int> cand;
+        for (int i : pool) if (i != cur) cand.push_back(i);
+        if (cand.empty()) return;
+        tune_to(cand[static_cast<size_t>(std::uniform_int_distribution<int>(0, static_cast<int>(cand.size()) - 1)(rng))]);
     };
     // 'b': the only key that follows the S/L mode. S: the channel that was played before (history, repeatable).
     // L: the channel before the current one in the list.
@@ -641,7 +658,7 @@ int radio_main(int argc, char** argv) {
         set_text_entry(on);
     };
 
-    // ---- the big STATIONS overlay (key L): add by URL (a), preset name (SHIFT+C) -------------------------------
+    // ---- the big STATIONS overlay (key L): add by URL (a), preset name (SHIFT+c) -------------------------------
     auto stov_add_commit = [&]() {
         StationsOverlay& so = ui.model.stov;
         std::string url = so.add_url;
@@ -1150,7 +1167,7 @@ int radio_main(int argc, char** argv) {
                 }
                 continue;
             }
-            // ------------------------------------------------------------------ LISTENING HISTORY (SHIFT+H)
+            // ------------------------------------------------------------------ LISTENING HISTORY (SHIFT+h)
             if (ui.model.hmenu.open) {
                 HistoryModel& hm = ui.model.hmenu;
                 const int nh = static_cast<int>(rhist.size());
@@ -1203,7 +1220,7 @@ int radio_main(int argc, char** argv) {
                 }
                 continue;
             }
-            // ------------------------------------------------------------------ SHIFT+O / SHIFT+V overlays (main screen)
+            // ------------------------------------------------------------------ SHIFT+o / SHIFT+v overlays (main screen)
             if (ui.model.stov.open && (ui.model.stov.add_open || ui.model.stov.alias_open) && !ui.model.cheat_open) {
                 StationsOverlay& so = ui.model.stov;
                 if (k == 3) { set_text_entry(false); running = false; continue; }
@@ -1236,7 +1253,7 @@ int radio_main(int argc, char** argv) {
                 if (k == 27 || k == key_of(cfg, "SleepTimer")) { ui.model.overlay = 0; settings_save(); }
                 continue;
             }
-            if (ui.model.overlay == 4 && !ui.model.cheat_open) {                 // the equaliser overlay (SHIFT+E)
+            if (ui.model.overlay == 4 && !ui.model.cheat_open) {                 // the equaliser overlay (SHIFT+e)
                 EqUi& eu = ui.model.eq;
                 const bool earrow = last_key_was_arrow();
                 auto eq_close = [&]() { ui.model.overlay = 0; eu.naming = false; set_text_entry(false); settings_save(); };
@@ -1437,7 +1454,7 @@ int radio_main(int argc, char** argv) {
                     if (k == 'j') { lm.cursor = std::min(std::max(0, nstat - 1), lm.cursor + 1); continue; }
                     if (k == 'k') { lm.cursor = std::max(0, lm.cursor - 1); continue; }
                     if (k == 13 || k == 10) { lm_add(); continue; }
-                    if (k == 'T') {                              // SHIFT+T: list order <-> name A-Z (also for search results)
+                    if (k == 'T') {                              // SHIFT+t: list order <-> name A-Z (also for search results)
                         ui.toggle_lists_sort();
                         lm.flash = lm.sort_az ? "STATIONS sorted by name A-Z" : "STATIONS in list order";
                         continue;
@@ -1473,6 +1490,9 @@ int radio_main(int argc, char** argv) {
                     if (f == MenuFocus::Search) { mn.search_edit.to_end(mn.search); mn.psearch_edit.to_end(mn.psearch); }
                     set_text_entry(f == MenuFocus::Search);
                 };
+                // SHIFT+d (twice) deletes the hovered preset; any other key withdraws the first press.
+                const int del_pending = mn.del_confirm;
+                if (!(k == 'D' && !arrow && mn.focus == MenuFocus::Presets)) mn.del_confirm = -1;
                 auto tune_hovered = [&]() {
                     if (mn.cursor < 0 || mn.cursor >= mvis) return;
                     tune_to(mn.visible[static_cast<size_t>(mn.cursor)]);
@@ -1625,8 +1645,27 @@ int radio_main(int argc, char** argv) {
                     if (k == 'k') { move_preset(-kPresetPaneCols); continue; }
                     if (k == 'l') { move_preset(+1); continue; }
                     if (k == 'h') { move_preset(-1); continue; }
-                    if (k == 'N') { open_name_overlay(false); continue; }                       // SHIFT+N: new preset
-                    if (k == 'C' && pvis > 0) { open_name_overlay(true); continue; }            // SHIFT+C: rename the hovered preset
+                    if (k == 'N') { open_name_overlay(false); continue; }                       // SHIFT+n: new preset
+                    if (k == 'C' && pvis > 0) { open_name_overlay(true); continue; }            // SHIFT+c: rename the hovered preset
+                    if (k == 'D' && !arrow && pvis > 0) {                                        // SHIFT+d: delete the hovered preset (twice)
+                        const int bi = mn.pvisible[static_cast<size_t>(std::clamp(mn.pcursor, 0, pvis - 1))];
+                        const std::string bname = ui.model.banks[static_cast<size_t>(bi)].name;
+                        if (ui.model.banks.size() < 2) { mn.flash = "The last preset cannot be deleted"; continue; }
+                        if (del_pending != bi) {
+                            mn.del_confirm = bi;
+                            mn.flash = "Delete preset \"" + bname + "\"? Press SHIFT+d again to confirm, any other key cancels";
+                            continue;
+                        }
+                        ui.sync_active();
+                        ui.model.banks.erase(ui.model.banks.begin() + bi);
+                        if (bi < ui.model.bank_active) --ui.model.bank_active;
+                        else if (bi == ui.model.bank_active) ui.model.bank_active = std::min(bi, static_cast<int>(ui.model.banks.size()) - 1);
+                        ui.model.presets = ui.model.banks[static_cast<size_t>(ui.model.bank_active)].slots;
+                        ui.refilter_presets();
+                        mn.flash = "Preset \"" + bname + "\" deleted";
+                        if (!ui.persist()) mn.flash += "  -- could not write " + presets_path();
+                        continue;
+                    }
                     continue;
                 }
                 // --- STATIONS focused

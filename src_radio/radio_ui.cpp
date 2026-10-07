@@ -843,12 +843,12 @@ std::vector<std::string> build_lists(const Style& s, const UiModel& m, const Rad
     const int first = follow_scroll(scroll_id(1), cursor, list_rows, vis_n);
 
     std::vector<std::string> left;
-    // Title: the sort (SHIFT+T); while a station list is shown instead the small reminder that this is not the full list.
+    // Title: the sort (SHIFT+t); while a station list is shown instead the small reminder that this is not the full list.
     // (The search text is not repeated here any more -- it is in the search box.)
     std::string pane_label;
     if (m.search_lists) pane_label = "STATION LISTS (ENTER: show the stations)";
     else if (!m.active_list.empty()) pane_label = "STATIONS (LIST: " + utf8_take(m.active_list, 24) + " - ESC: all)";
-    else pane_label = std::string("STATIONS (") + (m.sort_az ? "sort: A-Z" : "sort: list order") + ")";   // SHIFT+T
+    else pane_label = std::string("STATIONS (") + (m.sort_az ? "sort: A-Z" : "sort: list order") + ")";   // SHIFT+t
     left.push_back(box_top(s, left_w, pane_label, s.border));
     const int inner = left_w - 4;
     // "NNN| name | genre | tail": number, separators and the 10-column tail are fixed, name/genre share the rest.
@@ -867,7 +867,7 @@ std::vector<std::string> build_lists(const Style& s, const UiModel& m, const Rad
         if (m.search_lists) {   // "p:" -- the STATIONS pane lists the saved station lists instead
             const int li = lfirst + r;
             if (li >= lvis_n) {
-                left.push_back(box_line(s, seg_line({{s.header, lvis_n == 0 && r == 0 ? (m.lists.empty() ? "no station lists yet - SHIFT+P creates one" : "no station list matches") : ""}}, inner), s.border));
+                left.push_back(box_line(s, seg_line({{s.header, lvis_n == 0 && r == 0 ? (m.lists.empty() ? "no station lists yet - SHIFT+p creates one" : "no station list matches") : ""}}, inner), s.border));
                 continue;
             }
             const StationList& l = m.lists[static_cast<size_t>(m.lvisible[static_cast<size_t>(li)])];
@@ -924,7 +924,7 @@ std::vector<std::string> build_lists(const Style& s, const UiModel& m, const Rad
             const bool on = idx == st.tuned_index && st.state != StreamState::Idle;
             const std::string& body = on ? s.list_playing : s.list;
             cols.push_back({s.preset_key + ansi_bg(s.c.list_bg), key});     // key letter in PRESETS KEY, station title like the list
-            // the preset name (SHIFT+C) if the station has one; the tuned entry scrolls when it does not fit
+            // the preset name (SHIFT+c) if the station has one; the tuned entry scrolls when it does not fit
             const std::string& lbl = stations[static_cast<size_t>(idx)].preset_label();
             const int lw = std::max(1, colw - 3);
             std::string shown;
@@ -971,7 +971,7 @@ std::vector<std::string> build_preset_pane(const Style& s, const UiModel& m, int
     out.push_back(box_top(s, W, pane_title(title, mn.focus == MenuFocus::Presets), s.border));
     for (int r = 0; r < R; ++r) {
         if (pv == 0) {
-            out.push_back(box_line(s, seg_line({{s.header, r == 0 ? (total == 0 ? "no presets yet - SHIFT+N creates one" : "no preset matches") : ""}}, inner), s.border));
+            out.push_back(box_line(s, seg_line({{s.header, r == 0 ? (total == 0 ? "no presets yet - SHIFT+n creates one" : "no preset matches") : ""}}, inner), s.border));
             continue;
         }
         std::vector<Seg> cells;
@@ -1165,7 +1165,7 @@ std::vector<std::string> build_menu(const Style& s, const UiModel& m, const Radi
     // --- hints (same style as the playlist menu), status line, filler ---------------------------
     out.push_back(seg_line({{s.legend, "[TAB] Switch pane | [\u2191\u2193\u2190\u2192] Navi. | [ENTER] Tune / Open Preset | [/] Search | [p:] Search presets | [ESC] Clear / Exit"}}, W));
     out.push_back(seg_line({{s.legend, std::string("In STATIONS: Set preset via [") + kPresetKeys + "] | [DEL] Clear preset | same key again clears it"}}, W));
-    out.push_back(seg_line({{s.legend, "In SELECT PRESET: [SHIFT+N] New preset | [SHIFT+C] Rename preset | Outside SEARCH: [SHIFT+\u2190/\u2192] Previous / next preset"}}, W));
+    out.push_back(seg_line({{s.legend, "In SELECT PRESET: [SHIFT+n] New | [SHIFT+c] Rename | [SHIFT+d] Delete | Outside SEARCH: [SHIFT+\u2190/\u2192] Prev. / next preset"}}, W));
     out.push_back(seg_line({{s.header, mn.flash}}, W));
     while (static_cast<int>(out.size()) < rows) out.push_back(spaces(W));
     out.resize(static_cast<size_t>(rows));
@@ -1409,7 +1409,7 @@ std::vector<std::string> build_lists_menu(const Style& s, const UiModel& m, cons
         out.push_back(spaces(W));
     } else {
         out.push_back(seg_line({{s.legend, "[" MUISC_ALT_NAME "+←→] Switch Tab | [TAB] Focus | [↑↓] Navi. | [ENTER] Add/Load | [DEL] Remove | [4/5] Move ↑↓ | [s/HOME] Save"}}, W));
-        out.push_back(seg_line({{s.legend, "[SHIFT+T] Sort | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [/] Search | [?] Cheatsheet | [ESC] Clear / Exit"}}, W));
+        out.push_back(seg_line({{s.legend, "[SHIFT+t] Sort | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [/] Search | [?] Cheatsheet | [ESC] Clear / Exit"}}, W));
     }
     out.push_back(seg_line({{s.header, lm.flash}}, W));
     while (static_cast<int>(out.size()) < rows) out.push_back(spaces(W));
@@ -1609,7 +1609,7 @@ std::vector<std::string> build_browse(const Style& s, const UiModel& m, const Ra
 // Key labels are the DEFAULT keys (lowercase = the plain key, SHIFT+x = the capital); the REFERENCE settings tab rebinds most of them.
 // ===========================================================================================
 // How a key is shown in the cheat sheet and on the REFERENCE tab: a capital letter is a Shift press, so "T" reads
-// "SHIFT+t" (the binding itself stays "T"); labels such as "SHIFT+T" / "CTRL+SHIFT+U" get the lower-case letter too.
+// "SHIFT+t" (the binding itself stays "T"); labels such as "SHIFT+t" / "CTRL+SHIFT+u" get the lower-case letter too.
 std::string pretty_key(const std::string& k) {
     if (k == "@SWITCHKEY") return muisc::mode_switch_key_label();   // named for this keyboard (keyboard_layout.h)
     if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return std::string("SHIFT+") + static_cast<char>(k[0] + 32);
@@ -1666,30 +1666,30 @@ const CheatRow kCheatRows[] = {
     {nullptr, "p", "Mute / unmute (box shows MUTE / TUNE); with no channel loaded it tunes the hovered one instead"},
     {nullptr, "x", "Stop the stream"},
     {nullptr, "v", "Toggle loudness normalisation"},
-    {nullptr, "SHIFT+V", "Loudness normalisation overlay (target level, max boost)"},
-    {nullptr, "SHIFT+E", "Equalizer overlay (the player's 10 bands + presets; the preset key e is lowercase and unaffected)"},
-    {nullptr, "  < > / UP DOWN", "Equalizer: select band (LEFT / RIGHT) / gain +1 / -1 dB"},
-    {nullptr, "  , . TAB / 0 / R", "Equalizer: previous / next preset / zero the band / reset to Flat (SPACE on/off)"},
-    {nullptr, "  S / DEL X", "Equalizer: save the curve as a custom preset (ENTER saves, ESC cancels) / delete the selected one (press twice)"},
+    {nullptr, "SHIFT+v", "Loudness normalisation overlay (target level, max boost)"},
+    {nullptr, "SHIFT+e", "Equalizer overlay (the player's 10 bands + presets; the preset key e is lowercase and unaffected)"},
+    {nullptr, "</>/UP/DOWN", "Equalizer: select band (LEFT / RIGHT) / gain +1 / -1 dB"},
+    {nullptr, ",/./TAB/0/R", "Equalizer: previous / next preset / zero the band / reset to Flat (SPACE on/off)"},
+    {nullptr, "S/DEL/X", "Equalizer: save the curve as a custom preset (ENTER saves, ESC cancels) / delete the selected one (press twice)"},
     {nullptr, "o", "Switch the scope block between the oscilloscope and the sphere (rebindable; + is the volume key)"},
-    {nullptr, "SHIFT+O", "Oscilloscope overlay (display, style, frame rate, image protocol, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
-    {nullptr, "SHIFT+Z", "Sleep timer: 15 / 30 / 60 / 90 / 120 min, stops the stream (optionally with a fade-out of the volume)"},
+    {nullptr, "SHIFT+o", "Oscilloscope overlay (display, style, frame rate, image protocol, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
+    {nullptr, "SHIFT+z", "Sleep timer: 15 / 30 / 60 / 90 / 120 min, stops the stream (optionally with a fade-out of the volume)"},
     {nullptr, "y", "Record the tuned stream (MP3, named by date and time, into the download folder); y again stops and saves"},
     {nullptr, "h", "Open the LISTENING HISTORY: HISTORY / TOP CHANNELS / HABITS"},
-    {nullptr, "SHIFT+L", "Open the big STATIONS overlay (the STATIONS pane with the whole screen)"},
+    {nullptr, "SHIFT+l", "Open the big STATIONS overlay (the STATIONS pane with the whole screen)"},
     {nullptr, "s", "Open the RADIO SETTINGS (colours, switches, animation, paths, keys, about; saved to radio_config.txt)"},
-    {nullptr, "SHIFT+R", "Reconnect the tuned station"},
-    {nullptr, "SHIFT+S", "Open the RADIO BROWSER menu: search stations worldwide (radio-browser.info)"},
-    {nullptr, "SHIFT+P", "Open the STATION LISTS menu: build, save and load named station lists"},
+    {nullptr, "SHIFT+r", "Reconnect the tuned station"},
+    {nullptr, "SHIFT+s", "Open the RADIO BROWSER menu: search stations worldwide (radio-browser.info)"},
+    {nullptr, "SHIFT+p", "Open the STATION LISTS menu: build, save and load named station lists"},
     {nullptr, "+ / -", "Volume up / down (5 % steps)"},
     // --- Navigation ---
     {"NAVIGATION (MAIN UI)", "UP / DOWN", "Move the cursor in the STATIONS list"},
-    {nullptr, "SHIFT+T", "Toggle the STATIONS sort: list order <-> name A-Z (also for the search results)"},
+    {nullptr, "SHIFT+t", "Toggle the STATIONS sort: list order <-> name A-Z (also for the search results)"},
     // --- Presets ---
     {"PRESETS (MAIN UI)", "1 2 3 4 5 6 7 8 9 0", "Tune slot 1-10 of the active preset"},
     {nullptr, "E R T D F G", "Tune slot 11-16 of the active preset (lowercase)"},
     {nullptr, "SHIFT+LEFT/RIGHT", "Previous / next preset (wraps; saved right away)"},
-    {nullptr, "SHIFT+K", "Open the PRESETS menu"},
+    {nullptr, "SHIFT+k", "Open the PRESETS menu"},
     // --- Search ---
     {"SEARCH (MAIN UI)", "/", "Search stations (matches name, genre and country)"},
     {nullptr, "TYPE", "Filter the list while you type; BACKSPACE deletes"},
@@ -1715,31 +1715,31 @@ const CheatRow kCheatRows[] = {
     {nullptr, "ESC", "Clear the search / close the menu"},
     {nullptr, "?", "This cheatsheet (not while typing in the search box)"},
     {nullptr, "CTRL+C", "Quit (in the search box it copies instead)"},
-    {"STATION LISTS MENU (SHIFT+P)", "ALT+LEFT/RIGHT", "Switch tab: CREATE / EDIT <-> SAVED STATION LISTS (from every pane)"},
+    {"STATION LISTS MENU (SHIFT+p)", "ALT+LEFT/RIGHT", "Switch tab: CREATE / EDIT <-> SAVED STATION LISTS (from every pane)"},
     {nullptr, "TAB", "Cycle focus. Tab 1: name, search, STATIONS, LIST CONTENTS. Tab 2: search, list"},
     {nullptr, "ENTER", "Name: on to the search / search, STATIONS: add hovered station / LIST CONTENTS: tune it"},
     {nullptr, "ENTER", "Tab 2: search -> the list / STATION LISTS: load the hovered list into tab 1"},
     {nullptr, "S / HOME", "Save the list under its name (S: not while typing; HOME: anywhere). Same name overwrites"},
-    {nullptr, "SHIFT+T", "STATIONS: toggle the sort, list order <-> name A-Z (also for the search results)"},
+    {nullptr, "SHIFT+t", "STATIONS: toggle the sort, list order <-> name A-Z (also for the search results)"},
     {nullptr, "DEL / BACKSPACE / D", "LIST CONTENTS: remove the hovered station from the list"},
     {nullptr, "4 / 5", "LIST CONTENTS: move the hovered station up / down"},
     {nullptr, "DEL", "Tab 2, STATION LISTS: delete the hovered list (asks first)"},
     {nullptr, "/", "Back to the search box of the tab (not while typing)"},
     {nullptr, "ESC", "Search with text: clear it. Else close the menu (unsaved changes: asks Y / N / ESC)"},
     {nullptr, "J / K", "Move the cursor down / up in a list pane"},
-    {"BIG STATIONS OVERLAY (SHIFT+L)", "/", "Search like in the main screen (typo tolerant; p: searches the station lists, ENTER opens one and tunes its first station, s: back to stations)"},
+    {"BIG STATIONS OVERLAY (SHIFT+l)", "/", "Search like in the main screen (typo tolerant; p: searches the station lists, ENTER opens one and tunes its first station, s: back to stations)"},
     {nullptr, "UP / DOWN", "Move the cursor; ENTER tunes the hovered station; n / b / # / p / x / + / - work as in the main screen"},
     {nullptr, "A", "Add a station by its stream URL (TAB: URL <-> NAME; an empty NAME becomes the host name); saved to stations.txt"},
-    {nullptr, "SHIFT+C", "Give the hovered station a PRESET NAME: a shorter second name shown in the PRESETS pane (empty = the station's own name)"},
-    {nullptr, "SHIFT+T", "Sort: list order <-> name A-Z"},
-    {nullptr, "ESC / SHIFT+L", "Clear the search, leave a list, then close the overlay"},
+    {nullptr, "SHIFT+c", "Give the hovered station a PRESET NAME: a shorter second name shown in the PRESETS pane (empty = the station's own name)"},
+    {nullptr, "SHIFT+t", "Sort: list order <-> name A-Z"},
+    {nullptr, "ESC / SHIFT+l", "Clear the search, leave a list, then close the overlay"},
     {"LISTENING HISTORY MENU (h)", "LEFT / RIGHT / TAB / 1 2 3", "Switch tab: HISTORY / TOP CHANNELS / HABITS"},
-    {nullptr, "UP / DOWN / J / K", "Move the cursor (HISTORY, TOP CHANNELS) or scroll (HABITS); HOME / END (or G / SHIFT+G) jump to the ends"},
+    {nullptr, "UP / DOWN / J / K", "Move the cursor (HISTORY, TOP CHANNELS) or scroll (HABITS); HOME / END (or G / SHIFT+g) jump to the ends"},
     {nullptr, "R", "TOP CHANNELS: most <-> least listened first"},
     {nullptr, "Y", "HISTORY: search the hovered line (artist + title) on YouTube in a small overlay"},
     {nullptr, "ENTER / TAB / ESC", "YouTube overlay: search, or download the hovered result / edit the query <-> results / close"},
     {nullptr, "ESC / q / h", "Close the history"},
-    {"RADIO BROWSER MENU (SHIFT+S)", "TAB", "Cycle focus: NAME -> TAGS -> COUNTRY -> STATE -> LANGUAGE -> BITRATE -> RESULTS"},
+    {"RADIO BROWSER MENU (SHIFT+s)", "TAB", "Cycle focus: NAME -> TAGS -> COUNTRY -> STATE -> LANGUAGE -> BITRATE -> RESULTS"},
     {nullptr, "ENTER", "In a pane: run the search (focus jumps to RESULTS) / in RESULTS: tune the hovered station"},
     {nullptr, "UP / DOWN", "In a pane: jump to the pane above / below (down from the last row: RESULTS) / in RESULTS: move the cursor"},
     {nullptr, "LEFT / RIGHT", "In a pane: move the caret (text-field keys above)"},
@@ -1759,8 +1759,9 @@ const CheatRow kCheatRows[] = {
     {nullptr, "J / K", "Move the cursor down / up"},
     {"PRESETS MENU: SELECT PRESET PANE", "ARROWS / H J K L", "Move in the 4-column grid"},
     {nullptr, "ENTER", "Open the hovered preset and tune its first filled slot"},
-    {nullptr, "SHIFT+N", "New preset (opens the name box)"},
-    {nullptr, "SHIFT+C", "Rename the hovered preset"},
+    {nullptr, "SHIFT+n", "New preset (opens the name box)"},
+    {nullptr, "SHIFT+c", "Rename the hovered preset"},
+    {nullptr, "SHIFT+d", "Delete the hovered preset (press twice; the last preset cannot be deleted)"},
     {nullptr, "ENTER / ESC", "Name box: confirm / cancel"},
     {"RADIO SETTINGS (s)", "TAB", "Next tab: COLORS / ON/OFF / ANIMATION / PATHS / REFERENCE / ABOUT APP"},
     {nullptr, "UP / DOWN", "Move through the rows (LEFT / RIGHT or ENTER change a switch; ENTER edits a colour, a folder or a key)"},
@@ -1770,7 +1771,7 @@ const CheatRow kCheatRows[] = {
     {nullptr, "REFERENCE: ENTER", "Change the key of the hovered command; a key that is already taken is refused with the name of its owner"},
     {nullptr, "REFERENCE: DEL", "Restore the default key of the hovered command"},
     {nullptr, "REFERENCE: RESET", "The first row under the note: every key back to its default"},
-    {nullptr, "CTRL+SHIFT+U", "Undo the last key change or reset (up to 5, newest first); the cursor jumps to the key that came back"},
+    {nullptr, "CTRL+SHIFT+u", "Undo the last key change or reset (up to 5, newest first); the cursor jumps to the key that came back"},
 };
 
 std::vector<std::string> build_cheatsheet(const Style& s, const UiModel& m, int W, int rows) {
@@ -1847,7 +1848,7 @@ std::vector<std::string> build_stations_overlay(const Style& s, const UiModel& m
         for (int r = 0; r < body; ++r) {
             const int li = first + r;
             if (li >= total) {
-                out.push_back(box_line(s, seg_line({{s.header, total == 0 && r == 0 ? (m.lists.empty() ? "no station lists yet - SHIFT+P creates one" : "no station list matches") : ""}}, inner), s.border));
+                out.push_back(box_line(s, seg_line({{s.header, total == 0 && r == 0 ? (m.lists.empty() ? "no station lists yet - SHIFT+p creates one" : "no station list matches") : ""}}, inner), s.border));
                 continue;
             }
             const StationList& l = m.lists[static_cast<size_t>(m.lvisible[static_cast<size_t>(li)])];
@@ -1888,8 +1889,8 @@ std::vector<std::string> build_stations_overlay(const Style& s, const UiModel& m
         const int hidden = std::max(0, total - (first + rowsn));
         out.push_back(box_bottom(s, W, hidden > 0 ? "( " + std::to_string(hidden) + " more )" : "", s.border_bottom));
     }
-    out.push_back(seg_line({{s.legend, "[↑↓] Navi. | [ENTER] Tune / open list | [/] Search | [p:] Station lists | [a] Add by URL | [SHIFT+C] Preset name"}}, W));
-    out.push_back(seg_line({{s.legend, "[SHIFT+T] Sort | [n/b/#] Next / back / random | [p] Mute | [x] Stop | [+/-] Volume | [ESC] Clear / Back | [L] Close"}}, W));
+    out.push_back(seg_line({{s.legend, "[↑↓] Navi. | [ENTER] Tune / open list | [/] Search | [p:] Station lists | [a] Add by URL | [SHIFT+c] Preset name"}}, W));
+    out.push_back(seg_line({{s.legend, "[SHIFT+t] Sort | [n/b/#] Next / back / random | [p] Mute | [x] Stop | [+/-] Volume | [ESC] Clear / Back | [L] Close"}}, W));
     out.push_back(seg_line({{s.header, utf8_take(so.flash, W)}}, W));
     while (static_cast<int>(out.size()) < rows) out.push_back(spaces(W));
     out.resize(static_cast<size_t>(rows));
@@ -2340,20 +2341,20 @@ std::vector<std::string> build_settings(const RadioSettings& c, const SettingsMo
     out.push_back(bar(H - 3) + "└" + repeat(Hz, std::max(0, W - 2)) + "┘" + kReset);
     std::string hint;
     if (sm.tab == 4 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type one key (or SPACE / TAB / BACKSPACE)";
-    else if (sm.tab == 4) hint = "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change key | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save & close | [ESC/q] Discard & close";
+    else if (sm.tab == 4) hint = "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save | [ESC/q] Discard";
     else if (sm.tab == 5) hint = "[TAB] Switch | [\u2191\u2193] Scroll | [ESC/q] Back";
     else if (sm.tab == 3 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type or paste a folder (empty = default)";
-    else if (sm.tab == 3) hint = "[TAB] Switch | [↑↓] Navigate | [ENTER] Edit / toggle | [s] Save & close | [ESC/q] Discard & close";
-    else if (sm.tab >= 1) hint = "[TAB] Switch | [↑↓] Navigate | [←→/ENTER] Change | [s] Save & close | [ESC/q] Discard & close";
+    else if (sm.tab == 3) hint = "[TAB] Switch | [↑↓] Navigate | [ENTER] Edit / toggle | [s] Save | [ESC/q] Discard";
+    else if (sm.tab >= 1) hint = "[TAB] Switch | [↑↓] Navigate | [←→/ENTER] Change | [s] Save | [ESC/q] Discard";
     else if (sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type a palette number 0-255 (empty or 0 = terminal colour)";
-    else hint = "[TAB] Switch | [↑↓←→] Navigate | [ENTER] Edit | [s] Save & close | [ESC/q] Discard & close";
+    else hint = "[TAB] Switch | [↑↓←→] Navigate | [ENTER] Edit | [s] Save | [ESC/q] Discard";
     out.push_back(seg_line({{legend, hint}}, W));
     out.push_back(seg_line({{"\x1b[32m", utf8_take(sm.status.empty() && sm.dirty ? std::string("* unsaved changes (saved with S or when you leave)") : sm.status, W)}}, W));
     return out;
 }
 
 // ===========================================================================================
-// Overlays over the main screen: SHIFT+O oscilloscope tuning, SHIFT+V loudness normalisation (same rows, ranges and
+// Overlays over the main screen: SHIFT+o oscilloscope tuning, SHIFT+v loudness normalisation (same rows, ranges and
 // keys as the music player's).
 // ===========================================================================================
 constexpr int kOsciOverlayW = 44;
@@ -2445,7 +2446,7 @@ std::vector<std::string> build_overlay(const Style& s, const UiModel& m, const R
             lines.push_back(row(u.status, false));
             lines.push_back(legend_row("[</>] band  [UP/DOWN] gain  [,/.] preset  [0] zero"));
             lines.push_back(legend_row("[S] save preset  [DEL/X] delete preset"));
-            lines.push_back(box_bottom(s, W, "[SPACE] on/off  [R] flat  [SHIFT+E / ESC] close", s.border_bottom));
+            lines.push_back(box_bottom(s, W, "[SPACE] on/off  [R] flat  [SHIFT+e / ESC] close", s.border_bottom));
         }
     } else if (sleep) {
         auto clock = [](double sec) {
@@ -2481,7 +2482,7 @@ std::vector<std::string> build_overlay(const Style& s, const UiModel& m, const R
         }
         lines.push_back(row(c.scope_mode == 2 ? "The scope is switched off (ON/OFF tab: Osci/sphere)"
                                               : "[UP/DOWN] select   [LEFT/RIGHT] change", false, "\x1b[90m"));
-        lines.push_back(box_bottom(s, W, "[R] reset  [SHIFT+O / ESC] close", s.border_bottom));
+        lines.push_back(box_bottom(s, W, "[R] reset  [SHIFT+o / ESC] close", s.border_bottom));
     } else {
         const std::string vals[3] = {c.normalize ? "on" : "off", fmt_loudness(c.normalize_target_lufs) + " LUFS",
                                      fmt_loudness(c.normalize_max_boost_db) + " dB"};
@@ -2498,7 +2499,7 @@ std::vector<std::string> build_overlay(const Style& s, const UiModel& m, const R
         }
         lines.push_back(row(live, false, "\x1b[90m"));
         lines.push_back(row("[UP/DOWN] select   [LEFT/RIGHT] change", false));
-        lines.push_back(box_bottom(s, W, "[SPACE] on/off  [R] reset  [SHIFT+V / ESC] close", s.border_bottom));
+        lines.push_back(box_bottom(s, W, "[SPACE] on/off  [R] reset  [SHIFT+v / ESC] close", s.border_bottom));
     }
     return lines;
 }
@@ -2597,7 +2598,7 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
         scope_x = 1 + (show_sign ? kLeftW + ex_first + kSepW : 0) + kMetaW + (show_sign ? ex_second : 0) + (show_sign ? 0 : std::max(0, (rest_w - scope_w) / 2));
         m.gfx.col = scope_x; m.gfx.row = 1; m.gfx.crop = 0;
     }
-    if (m.overlay != 0) {   // SHIFT+O / SHIFT+V overlay, centred over the finished screen
+    if (m.overlay != 0) {   // SHIFT+o / SHIFT+v overlay, centred over the finished screen
         const auto panel = build_overlay(s, m, st);
         const int pw = m.overlay == 4 ? kEqOverlayW : m.overlay == 3 ? kSleepOverlayW : m.overlay == 1 ? kOsciOverlayW : kNormOverlayW;
         const int ph = static_cast<int>(panel.size());

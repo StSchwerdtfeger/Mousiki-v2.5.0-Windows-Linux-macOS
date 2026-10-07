@@ -1,5 +1,5 @@
 #pragma once
-// The radio's equaliser overlay (SHIFT+E): the music player's 10-band EQ (src/equalizer.h) with the same presets, the
+// The radio's equaliser overlay (SHIFT+e): the music player's 10-band EQ (src/equalizer.h) with the same presets, the
 // same keys and the same look. The gains / custom presets live in RadioSettings (radio_config.txt); this file holds the
 // overlay's own state and the preset logic (a copy of App::eq_* in app.cpp, which is tied to the player's settings).
 #include <algorithm>

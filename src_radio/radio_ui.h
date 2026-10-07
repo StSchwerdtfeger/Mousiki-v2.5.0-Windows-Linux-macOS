@@ -72,6 +72,7 @@ struct MenuModel {
     std::vector<int> pvisible;    // preset (bank) indices passing `psearch`, in list order
     int pcursor = 0;              // position within `pvisible`
     NameOverlay name;
+    int del_confirm = -1;         // preset (bank) index waiting for the second SHIFT+d
     std::string flash;            // one status line under the hints ("Preset 3 = ...")
     mutable int marquee_row = -1;
     mutable double marquee_since = 0.0;
@@ -127,7 +128,7 @@ struct ListMenuModel {
     EditState search_edit;
     std::vector<int> visible;             // station indices passing `search`, sorted by `sort_az`
     int cursor = 0;                       // position within `visible`
-    bool sort_az = false;                 // SHIFT+T in STATIONS: false = list order (as added to stations.txt), true = name A-Z
+    bool sort_az = false;                 // SHIFT+t in STATIONS: false = list order (as added to stations.txt), true = name A-Z
     bool dirty = false;                   // unsaved changes in tab 1 (ESC asks first)
     // --- tab 2: the saved lists
     ListManageFocus mfocus = ListManageFocus::List;
@@ -185,7 +186,7 @@ struct HistoryModel {
 // ---- the big STATIONS overlay (key L) ----------------------------------------------------------------
 // An expansion of the main STATIONS pane: it shows (and edits) the very same state as the main screen -- the same search
 // box (`/`, `p:` searches the station lists, ENTER opens one), `visible`, `cursor`, sort and active list -- just with the
-// whole screen for the rows and one more column (the PRESET NAME). `a` adds a station by its stream URL, SHIFT+C sets the
+// whole screen for the rows and one more column (the PRESET NAME). `a` adds a station by its stream URL, SHIFT+c sets the
 // hovered station's second name for the PRESETS pane.
 struct StationsOverlay {
     bool open = false;
@@ -197,7 +198,7 @@ struct StationsOverlay {
     int add_field = 0;
     std::string add_url, add_name, add_error;
     EditState add_edit[2];
-    // SHIFT+C: the PRESET NAME of station `alias_idx` (empty = back to the station's own name)
+    // SHIFT+c: the PRESET NAME of station `alias_idx` (empty = back to the station's own name)
     bool alias_open = false;
     int alias_idx = -1;
     std::string alias_text;
@@ -225,14 +226,14 @@ struct UiModel {
     StationsOverlay stov;
     mutable int pmarquee_row = -1;       // the tuned preset entry whose name scrolls in the PRESETS pane (-1 = none)
     mutable double pmarquee_since = 0.0;
-    // Small overlay over the main screen: 1 = oscilloscope tuning (SHIFT+O), 2 = loudness normalisation (SHIFT+V).
-    int overlay = 0;                // 3 = sleep timer (SHIFT+Z), 4 = equaliser (SHIFT+E)
+    // Small overlay over the main screen: 1 = oscilloscope tuning (SHIFT+o), 2 = loudness normalisation (SHIFT+v).
+    int overlay = 0;                // 3 = sleep timer (SHIFT+z), 4 = equaliser (SHIFT+e)
     EqUi eq;                        // the equaliser overlay's own state
     int sleep_running = 0;          // the minute choice that is running (0 = no timer)
     double sleep_left = 0.0;        // seconds until it stops
     double sleep_fade_sec = 0.0;    // length of the fade-out of the running / selected timer (0 = fade off)
     int overlay_row = 0;
-    bool sort_az = false;         // SHIFT+T: the main STATIONS pane (and its search results) sorted by name A-Z instead of list order
+    bool sort_az = false;         // SHIFT+t: the main STATIONS pane (and its search results) sorted by name A-Z instead of list order
     bool shuffle = true;          // station-surf mode shown in the small box next to SEARCH: true = "S" (shuffle), false = "L" (list); toggled with M
     std::string notice;           // one status line in the SEARCH box's hint spot ("recording saved ..."); main clears it after a few seconds
     bool cheat_open = false;      // the full-screen CHEATSHEET ('?'); drawn instead of the radio screen / menu
