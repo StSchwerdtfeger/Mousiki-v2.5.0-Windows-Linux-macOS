@@ -1,0 +1,287 @@
+# Builds the Mousiki installers + portable zips on GitHub Actions.
+# Started by `python packaging/release.py cloud|all ...` (workflow_dispatch) or by hand in the Actions tab.
+#
+#   windows : unsigned in one step, or (sign=true) compile -> SignPath signs mousiki.exe + fpcalc.exe
+#             -> package -> SignPath signs the setup.exe
+#   linux   : .deb + portable zip (Ubuntu 22.04 runner, so the binary also runs on older distros)
+#   macos   : universal .pkg + portable zip
+#   release : SHA256SUMS.txt, GPG signatures for every package (if GPG_PRIVATE_KEY is set),
+#             GitHub build-provenance attestations (public repositories), one artifact "mousiki-release"
+#
+# Secrets / variables (Settings -> Secrets and variables -> Actions) - all optional:
+#   GPG_PRIVATE_KEY (secret), GPG_PASSPHRASE (secret, if the key has one)   -> signed packages
+#   SIGNPATH_API_TOKEN (secret), SIGNPATH_ORGANIZATION_ID, SIGNPATH_PROJECT_SLUG (variables)  -> sign=true
+#   SIGNPATH_SIGNING_POLICY_SLUG (default release-signing), SIGNPATH_CONFIG_BINARIES (default binaries),
+#   SIGNPATH_CONFIG_INSTALLER (default installer)                            (variables)
+name: build-installers
+
+on:
+  workflow_dispatch:
+    inputs:
+      targets:
+        description: "Comma list: windows,linux,macos"
+        default: "windows,linux,macos"
+      version:
+        description: "Override the detected version (empty = automatic)"
+        default: ""
+      clean:
+        description: "Rebuild from scratch"
+        default: "false"
+      sign:
+        description: "Sign the Windows files with SignPath (needs source=checkout)"
+        default: "false"
+      source:
+        description: "zip = the uploaded release 'mousiki-source', checkout = this repository's content"
+        default: "zip"
+
+permissions:
+  contents: read
+
+env:
+  PYTHONUTF8: "1"
+  BUILD_ARGS: ${{ inputs.version != '' && format('--version {0}', inputs.version) || '' }} ${{ inputs.clean == 'true' && '--clean' || '' }}
+
+jobs:
+  windows:
+    if: contains(inputs.targets, 'windows')
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: bash
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Inno Setup
+        run: |
+          if ! command -v iscc >/dev/null 2>&1 && [ ! -f "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" ]; then
+            choco install innosetup -y --no-progress
+          fi
+      - name: Source selection
+        run: |
+          if [ "${{ inputs.source }}" = "checkout" ] || [ "${{ inputs.sign }}" = "true" ]; then
+            echo "SRC_ARGS=--src ." >> "$GITHUB_ENV"
+          else
+            mkdir -p packaging/input
+            gh release download mousiki-source --repo "$GITHUB_REPOSITORY" --pattern mousiki-source.zip --dir packaging/input --clobber
+            echo "SRC_ARGS=--zip packaging/input/mousiki-source.zip" >> "$GITHUB_ENV"
+          fi
+
+      # ---- unsigned ----
+      - name: Build (unsigned)
+        if: inputs.sign != 'true'
+        run: python packaging/release.py build --target windows $SRC_ARGS $BUILD_ARGS
+
+      # ---- signed (SignPath) ----
+      - name: Compile
+        if: inputs.sign == 'true'
+        run: python packaging/release.py build --target windows --phase compile --to-sign-dir "$RUNNER_TEMP/to-sign" $SRC_ARGS $BUILD_ARGS
+      - name: Upload binaries to sign
+        if: inputs.sign == 'true'
+        id: up-bin
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-binaries
+          path: ${{ runner.temp }}/to-sign/*
+      - name: Sign binaries (SignPath)
+        if: inputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_CONFIG_BINARIES || 'binaries' }}
+          github-artifact-id: ${{ steps.up-bin.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signed-bin-raw
+      - name: Package (with the signed binaries)
+        if: inputs.sign == 'true'
+        run: |
+          python - <<'PY'
+          import os, zipfile, pathlib
+          raw = pathlib.Path(os.environ["RUNNER_TEMP"]) / "signed-bin-raw"
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "signed-bin"
+          out.mkdir(exist_ok=True)
+          zips = list(raw.rglob("*.zip"))
+          for z in zips:
+              zipfile.ZipFile(z).extractall(out)
+          if not zips:      # the action already extracted the files
+              for f in raw.rglob("*.exe"):
+                  (out / f.name).write_bytes(f.read_bytes())
+          print(sorted(p.name for p in out.iterdir()))
+          PY
+          python packaging/release.py build --target windows --phase package --signed-binaries "$RUNNER_TEMP/signed-bin" \
+            --installer-to-sign-dir "$RUNNER_TEMP/installer-to-sign" $SRC_ARGS $BUILD_ARGS
+      - name: Upload installer to sign
+        if: inputs.sign == 'true'
+        id: up-setup
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: ${{ runner.temp }}/installer-to-sign/*
+      - name: Sign installer (SignPath)
+        if: inputs.sign == 'true'
+        uses: signpath/github-action-submit-signing-request@v1
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG || 'release-signing' }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_CONFIG_INSTALLER || 'installer' }}
+          github-artifact-id: ${{ steps.up-setup.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: ${{ runner.temp }}/signed-setup-raw
+      - name: Replace the installer with the signed one
+        if: inputs.sign == 'true'
+        run: |
+          python - <<'PY'
+          import os, zipfile, pathlib, shutil
+          tmp = pathlib.Path(os.environ["RUNNER_TEMP"])
+          raw = tmp / "signed-setup-raw"
+          out = tmp / "signed-setup"
+          out.mkdir(exist_ok=True)
+          for z in raw.rglob("*.zip"):
+              zipfile.ZipFile(z).extractall(out)
+          for f in raw.rglob("*.exe"):
+              shutil.copy2(f, out / f.name)
+          signed = list(out.rglob("*-setup.exe"))
+          if not signed:
+              raise SystemExit("no signed setup.exe came back from SignPath")
+          dist = pathlib.Path("packaging/dist")
+          for old in dist.glob("*-setup.exe"):
+              old.unlink()
+          for f in signed:
+              shutil.copy2(f, dist / f.name)
+              print("signed installer:", f.name)
+          PY
+          powershell -NoProfile -Command "Get-ChildItem packaging/dist/*-setup.exe | ForEach-Object { '{0}: {1}' -f \$_.Name, (Get-AuthenticodeSignature \$_).Status }"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-windows
+          path: |
+            packaging/dist/*.exe
+            packaging/dist/*.zip
+          if-no-files-found: error
+
+  linux:
+    if: contains(inputs.targets, 'linux')
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source selection
+        run: |
+          if [ "${{ inputs.source }}" = "checkout" ]; then
+            echo "SRC_ARGS=--src ." >> "$GITHUB_ENV"
+          else
+            mkdir -p packaging/input
+            gh release download mousiki-source --repo "$GITHUB_REPOSITORY" --pattern mousiki-source.zip --dir packaging/input --clobber
+            echo "SRC_ARGS=--zip packaging/input/mousiki-source.zip" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        run: python3 packaging/release.py build --target linux --install-deps $SRC_ARGS $BUILD_ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-linux
+          path: |
+            packaging/dist/*.deb
+            packaging/dist/*.zip
+          if-no-files-found: error
+
+  macos:
+    if: contains(inputs.targets, 'macos')
+    runs-on: macos-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Source selection
+        run: |
+          if [ "${{ inputs.source }}" = "checkout" ]; then
+            echo "SRC_ARGS=--src ." >> "$GITHUB_ENV"
+          else
+            mkdir -p packaging/input
+            gh release download mousiki-source --repo "$GITHUB_REPOSITORY" --pattern mousiki-source.zip --dir packaging/input --clobber
+            echo "SRC_ARGS=--zip packaging/input/mousiki-source.zip" >> "$GITHUB_ENV"
+          fi
+      - name: Build
+        run: python3 packaging/release.py build --target macos --install-deps $SRC_ARGS $BUILD_ARGS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-macos
+          path: |
+            packaging/dist/*.pkg
+            packaging/dist/*.zip
+          if-no-files-found: error
+
+  release:
+    # checksums + GPG signatures + provenance attestations for whatever was built
+    needs: [windows, linux, macos]
+    if: ${{ !cancelled() && (needs.windows.result == 'success' || needs.linux.result == 'success' || needs.macos.result == 'success') }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      id-token: write       # attestations
+      attestations: write
+    env:
+      GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+      GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: collected
+          merge-multiple: true
+      - name: Collect the packages
+        run: |
+          mkdir -p packaging/dist
+          cp collected/* packaging/dist/
+          ls -l packaging/dist
+      - name: Checksums
+        run: python3 packaging/release.py checksums --dist packaging/dist
+      - name: GPG signatures
+        run: |
+          if [ -z "$GPG_PRIVATE_KEY" ]; then
+            echo "::notice::GPG_PRIVATE_KEY is not set - the packages are not GPG-signed"
+            exit 0
+          fi
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -p "$GNUPGHOME" && chmod 700 "$GNUPGHOME"
+          echo "allow-loopback-pinentry" > "$GNUPGHOME/gpg-agent.conf"
+          printf '%s' "$GPG_PASSPHRASE" > "$GNUPGHOME/pass"
+          printf 'pinentry-mode loopback\npassphrase-file %s\n' "$GNUPGHOME/pass" > "$GNUPGHOME/gpg.conf"
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          FPR=$(gpg --list-secret-keys --with-colons | awk -F: '/^fpr:/{print $10; exit}')
+          echo "Signing with key $FPR"
+          python3 packaging/release.py checksums --dist packaging/dist --gpg-key "$FPR"
+          shred -u "$GNUPGHOME/pass" || rm -f "$GNUPGHOME/pass"
+      - name: Build provenance attestation
+        id: attest
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            packaging/dist/*.exe
+            packaging/dist/*.zip
+            packaging/dist/*.deb
+            packaging/dist/*.pkg
+      - name: Keep the attestation bundle
+        if: ${{ steps.attest.outputs.bundle-path != '' }}
+        run: cp "${{ steps.attest.outputs.bundle-path }}" packaging/dist/mousiki-release.intoto.jsonl
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mousiki-release
+          path: packaging/dist/*
+          if-no-files-found: error
+      - name: Fail the run if a platform failed
+        if: ${{ needs.windows.result == 'failure' || needs.linux.result == 'failure' || needs.macos.result == 'failure' }}
+        run: |
+          echo "::error::at least one platform build failed - the release artifact is incomplete"
+          exit 1
