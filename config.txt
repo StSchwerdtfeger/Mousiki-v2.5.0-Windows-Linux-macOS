@@ -3,32 +3,39 @@
 # Location (Linux/macOS): $HOME/.config/mousiki/config.txt
 
 ##-------------------------------------------
-##              PANEL 1: COLORS
+##              COLORS
 ##-------------------------------------------
 
-# Frame & Controls
+# Frame lines: fade from top to bottom
 ColorBorderTop=170
 ColorBorderBottom=170
-ColorDiskTop=170
-ColorDiskBottom=30
+
+# ON AIR sign: diagonal gradient (upper left -> bottom right); also the needle, the lamp and the LIVE text
+ColorOnAirUpperLeft=170
+ColorOnAirBottomRight=30
+
+# Station info: the labels (Station, Title ...) and their values
 ColorMetadataKey=170
 ColorMetadataVal=182
+
+# FFT spectrum under the station info (ColorVizCenter = optional middle stop of the gradient)
 ColorVizLeft=170
+ColorVizCenter=
 ColorVizRight=30
-ColorProgressBarPlayed=170
-ColorProgressBarPending=182
 
-# Section headers (the REFERENCE tab's category titles and the
-# LOCAL PATH / DOWNLOAD PATH / PLAYLIST PATH titles on the PATHS tab) -- 0 = no color, plain bold text
-ColorHeader=10
+# Oscilloscope (top right)
+ColorOsciLeft=30
+ColorOsciRight=170
 
-# Key command legends (the grey hint lines such as "[ESC] close" in the Settings, the big
-# list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default
-ColorLegend=90
-ColorTabCurrent=90
-ColorTabOther=10
+# Frequency band: the line + ticks / the numbers and the small dots
+ColorFrequencyLine=170
+ColorFrequencyMHz=182
 
-# List
+# Volume bar: the # / the -
+ColorVolumeCurrent=170
+ColorVolumePossible=182
+
+# STATIONS list rows (the station names in the PRESETS pane use the same colours)
 ColorListInactiveFg=
 ColorListInactiveBg=
 ColorListPlayingFg=30
@@ -36,21 +43,21 @@ ColorListPlayingBg=182
 ColorListCursorFg=10
 ColorListCursorBg=238
 
-# Queue
-ColorQueueInactiveFg=
-ColorQueueInactiveBg=
-ColorQueuePlayingFg=30
-ColorQueuePlayingBg=182
-ColorQueueCursorFg=10
-ColorQueueCursorBg=238
+# PRESETS pane: key slots without a station / the short-cut key letters
+ColorPresetInactiveFg=90
+ColorPresetInactiveBg=
+ColorPresetKeyFg=10
 
-# Lyrics
-ColorLyricsInactiveFg=
-ColorLyricsInactiveBg=
-ColorLyricsActiveLineFg=182
-ColorLyricsActiveLineBg=
-ColorLyricsActiveWordFg=
-ColorLyricsActiveWordBg=
+# Secondary text: captions (off air, no signal), the ON AIR sign while nothing is live, empty-pane
+# messages, status lines, dimmed entries
+ColorHeader=10
+
+# Key command legends: the hint lines of the menus ([TAB] Switch pane | ...), their errors, the cheatsheet titles
+ColorLegend=90
+
+# Settings screen: the current tab name (and the < ↔ > hint) / the other tab names
+ColorTabCurrent=90
+ColorTabOther=10
 
 ##-------------------------------------------
 ##              PANEL 2: ON/OFF
