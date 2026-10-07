@@ -49,11 +49,10 @@ ColorLyricsActiveLineFg=251
 ColorLyricsActiveLineBg=
 ColorLyricsActiveWordFg=255
 ColorLyricsActiveWordBg=0
-
 ##-------------------------------------------
 ##              PANEL 2: ON/OFF
 ##-------------------------------------------
-
+ 
 ElimentDisk=true
 ElimentDummyButtons=true
 ElimentQueue=true
@@ -67,18 +66,18 @@ OsciDotThreshold=0.28
 ## 0.01 to 1.00 (lower = thicker line)
 OsciTailBrightness=0.45
 ## 0.00 to 1.00 (brightness of the oldest part of the trace)
-## Tune these three live with SHIFT+O in the main UI
+## Tune these three live with SHIFT+o in the main UI
 Visualizer=true
 MetaDataOnly=false
 ## true  = the (search-)lists show embedded metadata only -- the title tag is used
 ##         instead of the filename (files without a title tag keep their filename)
 ## false = lists show filename AND metadata, as before
 ## Toggleable live from this panel ("Show meta data only") or with HKeyToggleMetaOnly.
-
+ 
 ##-------------------------------------------
 ##             PANEL 3: ANIMATION
 ##-------------------------------------------
-
+ 
 VisualizerFluidity=10
 ## 1 to 10
 WaveformStyle=raw
@@ -96,40 +95,40 @@ LyricsAlignment=center
 LyricsAnimation=word by word
 ## full , word by word , line by line , letter by letter
 ## active line only , active word only
-
+ 
 ##-------------------------------------------
 ##             EMOJI IN TITLES
 ##-------------------------------------------
-
+ 
 ReplaceEmoji=true
 ## true  = an emoji in a title is drawn as a single "?" so the box borders always stay aligned
 ## false = draw the real emoji (alignment then depends on how your terminal measures emoji)
-
+ 
 ##-------------------------------------------
 ##             STEREO
 ##-------------------------------------------
-
+ 
 StereoPlayback=true
 ## true  = play tracks in stereo (uses about twice the memory per loaded track)
 ## false = mono: left and right are folded together, as in earlier versions
 ## Turning it off takes effect immediately; turning it on applies from the next track.
-
+ 
 ##-------------------------------------------
 ##             LOUDNESS NORMALIZATION
 ##-------------------------------------------
-
+ 
 NormalizeVolume=true
 NormalizeTargetLufs=-16
 NormalizeMaxBoostDb=9
 ## Each track is measured (LUFS) while it decodes and played at NormalizeTargetLufs.
 ## Quiet tracks are raised (at most NormalizeMaxBoostDb), loud/compressed ones lowered.
 ## -14 matches YouTube/Spotify; -16 leaves more headroom. Lower number = quieter overall.
-## Tune all three live with SHIFT+V in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)
-
+## Tune all three live with SHIFT+v in the main UI (the on/off switch is also on the ON/OFF tab and the `v` key)
+ 
 ##-------------------------------------------
 ##             EQUALIZER (Shift+E)
 ##-------------------------------------------
-
+ 
 EqualizerEnabled=false
 EqualizerBands=0,0,0,0,0,0,0,0,0,0
 ## Ten gains in dB (-12 to 12) for 31, 62, 125, 250, 500 Hz, 1, 2, 4, 8, 16 kHz.
@@ -138,21 +137,21 @@ EqualizerBands=0,0,0,0,0,0,0,0,0,0
 ## Create and delete them in the overlay: S saves the current curve under a name, DEL/X deletes the selected one.
 ## Example (remove the leading ## to use it):
 ## EqualizerPreset=4,3,1,0,-1,0,1,2,3,4|My Mix
-
+ 
 ##-------------------------------------------
 ##             CONSOLE / LOGGING
 ##-------------------------------------------
-
+ 
 ConsoleVerbosity=basic
 ## basic , verbose
 ## basic   = every command mousiki ran (yt-dlp/ffprobe/ffmpeg/lyrics-fetch) + its raw output
 ## verbose = basic, plus internal/OS-level events (terminal resize, audio device init, spawn errors, ...)
 ## Log file (Windows): %USERPROFILE%\.cache\mousiki\logs\console.log -- wiped fresh at the start of every session.
-
+ 
 ##-------------------------------------------
 ##             AUTOSAVE / SESSION SNAPSHOT
 ##-------------------------------------------
-
+ 
 AutoSave=true
 ## resumes the exact song/position/queue/repeat/shuffle next launch.
 ## Snapshot file (Windows): %USERPROFILE%\.cache\mousiki\snapshot\snapshot.json
@@ -166,11 +165,11 @@ AutoSaveIndicatorType=blink
 ## color = the indicator stays visible and pulses AutoSaveC1 -> AutoSaveC2 -> AutoSaveC1 (heartbeat) each save
 AutoSaveC1=
 AutoSaveC2=
-
+ 
 ##-------------------------------------------
 ##             PANEL 4: REFERENCE
 ##-------------------------------------------
-
+ 
 font_en={
           A={A,a},
           B={B,b},
@@ -199,7 +198,7 @@ font_en={
           Y={Y,y},
           Z={Z,z},
         };
-
+ 
 UpperLeftCorner="╭";
 UpperRightCorner="╮";
 BottomLeftCorner="╰";
@@ -208,10 +207,10 @@ Vertical="│";
 Horizontal="─";
 Seprator=":  :"
 ListSeparator="|"
-
+ 
 # General
 HKeySetting="s"
-
+ 
 # Local Music Paths
 # Windows paths and ~ expansion both work; forward and backward slashes
 # are both fine. Several paths are fine too (one line each). Edit them live
@@ -220,16 +219,15 @@ HKeySetting="s"
 # hand still works -- do that while mousiki is closed, or rescan afterwards.
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=%USERPROFILE%\Music
-
-# Playlists folder(s) (optional). By default, saved playlists live in
+ 
+# Playlists folder (optional, ONE folder). By default, saved playlists live in
 # <first LocalMusicPath above>\playlists -- and if no LocalMusicPath is
 # set at all, that silently falls back to %USERPROFILE%\.cache\mousiki\
-# playlists. One line per folder: playlists are listed and loaded from all
-# of them, while saving/deleting always uses the first. Editable live in
-# Settings -> PATH ("PLAYLIST PATH", plus "+ new path" for another line).
+# playlists. Only one folder is used (further PlaylistsPath lines are ignored);
+# playlists are listed, loaded, saved and deleted there. Editable live in
+# Settings -> PATH ("PLAYLIST PATH").
 #PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
-#PlaylistsPath=D:\Backups\playlists
-
+ 
 # Download folder (optional, single -- not a list): where yt-dlp writes what
 # it downloads. Leaving it out means the built-in cache folder,
 # %USERPROFILE%\.cache\mousiki, which is also what Settings shows in this
@@ -237,7 +235,7 @@ LocalMusicPath=%USERPROFILE%\Music
 # automatically, so there is no need to repeat it as a LocalMusicPath= line.
 # Editable live in Settings -> PATH ("DOWNLOAD PATH").
 #DownloadFolder=D:\Downloads\mousiki
-
+ 
 # Navigation
 HKeyNavigateUp="ARROW_KEY_UP"
 HKeyNavigateDown="ARROW_KEY_DOWN"
@@ -289,31 +287,31 @@ HKeyToggleMute="x"
 HKeyToggleWaveform="w"
 HKeyEqualizer="E"
 HKeySleepTimer="Z"
-
+ 
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
 ##-------------------------------------------
-
+ 
 ClassTextAboutApp= {
-
+ 
 Mousiki
-
+ 
 A terminal music player built for people who prefer control.
 Zero external UI bloat. Mousiki is designed around a fast, 
 focused TUI with no unnecessary interface layers. A terminal 
 music player built for people who prefer control.
-
+ 
 Devloper : ender                         Github   : itzender5820
 Email    : itz.ender5820@gmail.com
 Version  : original and final v1.0       Licence  : Apache licence 2.0
-
+ 
 Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Version      : v2.5.0                    Licence  : Apache licence 2.0
-
+Version      : v3.0.0                    Licence  : Apache licence 2.0
+ 
 Adjusted to also run on Windows. Several features and modifications were
-added, the general design remained. Additions: playlist menu, meta data 
-editor incl. fetch meta data function via AcoustID, listening history, 
-big list/queue overlays, equalizer, YX mode oscillator several new hot 
-keys and then some... See Readme.md for full list of additions and changes 
-along the win native port. Done with the help of AI tools.
+added, the general design remained. Additions: radio mode, playlist menu, 
+meta data editor incl. fetch meta data function via AcoustID, listening 
+history, big list/queue overlays, equalizer, YX mode oscillator several 
+new hot keys and then some... See Readme.md for full list of additions 
+and changes along the win native port. Done with the help of AI tools.
 };
