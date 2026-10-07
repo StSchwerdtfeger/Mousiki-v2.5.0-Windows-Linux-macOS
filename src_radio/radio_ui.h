@@ -1,0 +1,272 @@
+#pragma once
+// Radio mode -- the 120x30 screen. Pure rendering: takes a model and a status
+// snapshot, returns exactly `rows` lines of exactly `cols` visible columns each.
+// With UiModel::menu.open the whole frame is the PRESETS menu instead of the radio screen;
+// with UiModel::browse.open it is the RADIO BROWSER search menu (Shift+S);
+// with UiModel::lmenu.open it is the STATION LISTS menu (Shift+P);
+// with UiModel::cheat_open it is the CHEATSHEET (wins over both menus).
+// with UiModel::settings.open it is the RADIO SETTINGS screen (key `s`; tabs COLORS and ON/OFF).
+// Every colour comes from the radio's own radio_config.txt (RadioSettings, radio_settings.h) -- nothing is read from
+// the music player's config.txt.
+#include <string>
+#include <vector>
+#include <memory>
+#include "radio_browser.h"
+#include "radio_engine.h"
+#include "radio_stations.h"
+#include "radio_textedit.h"
+#include "radio_eq.h"
+#include "radio_settings.h"
+#include "radio_gfx.h"
+#include "radio_history.h"
+#include "radio_yt.h"
+
+namespace muisc::radio {
+
+// Minimum terminal size. The frame is exactly as tall as the terminal (30 lines at 30 rows); its last
+// line is written WITHOUT a trailing newline, so it can never scroll. Wider terminals only widen the
+// panes (up to kMaxCols); taller ones only give rows to the STATIONS / PRESETS boxes -- the top pane,
+// band, buttons and search keep their height.
+constexpr int kUiCols = 120;
+constexpr int kUiRows = 30;
+constexpr int kMaxCols = 200;
+
+// Colour wave over the ON AIR sign. The sign always carries a top-left -> bottom-right gradient of
+// the visualizer colours; this adds a travelling wave on top. Meant to become settings later.
+struct SignWave {
+    float speed = 0.25f;   // wave cycles per second (0 = static gradient)
+    float waves = 1.5f;    // wave crests across the sign's diagonal
+    float amount = 0.35f;  // 0 = plain gradient, 1 = only the wave
+};
+
+// Which pane of the PRESETS menu has the keyboard (TAB cycles SEARCH -> SELECT PRESET -> STATIONS).
+enum class MenuFocus { Search, Presets, Stations };
+
+// What the menu's search box filters. "s:" = stations (default), "p:" = presets (typed into the empty box;
+// the older "/s:" / "/p:" spellings still work).
+enum class SearchTarget { Stations, Presets };
+
+// The small centred overlay that asks for a preset name (Shift+N = new, Shift+C = rename). While it is
+// open it owns every key.
+struct NameOverlay {
+    bool open = false;
+    bool rename = false;      // false: creating a new preset, true: renaming `target`
+    int target = -1;          // preset index being renamed
+    std::string text;
+    EditState edit;           // caret + marked range inside `text`
+    std::string error;        // shown in the overlay's last row ("name already exists" ...)
+};
+
+// State of the big PRESETS menu (opened with P). It has its own searches + cursors, independent of the
+// main screen's, so opening and closing it never disturbs the list underneath.
+struct MenuModel {
+    bool open = false;
+    MenuFocus focus = MenuFocus::Search;
+    SearchTarget target = SearchTarget::Stations;
+    std::string search;           // station search (s:)
+    EditState search_edit;        // caret + marked range inside `search`
+    std::vector<int> visible;     // station indices passing `search`, in list order
+    int cursor = 0;               // position within `visible`
+    std::string psearch;          // preset search (p:)
+    EditState psearch_edit;       // caret + marked range inside `psearch`
+    std::vector<int> pvisible;    // preset (bank) indices passing `psearch`, in list order
+    int pcursor = 0;              // position within `pvisible`
+    NameOverlay name;
+    std::string flash;            // one status line under the hints ("Preset 3 = ...")
+    mutable int marquee_row = -1;
+    mutable double marquee_since = 0.0;
+};
+
+// Both lower panes of the menu are exactly this many content rows (boxes are two taller).
+constexpr int kMenuListRows = 16;
+
+// SELECT PRESET pane: 4 columns, this many content rows (so 8 presets are visible, it scrolls by rows).
+constexpr int kPresetPaneCols = 4;
+constexpr int kPresetPaneRows = 2;
+
+// ---- RADIO BROWSER menu (Shift+S) ---------------------------------------------------------------------
+// Six input panes (two per row) with the search, below them RESULTS and the hovered station's info.
+// TAB cycles NAME -> TAGS -> COUNTRY -> STATE -> LANGUAGE -> BITRATE -> RESULTS.
+enum class BrowseFocus { Name = 0, Tags, Country, State, Language, Bitrate, Results };
+constexpr int kBrowseFields = 6;
+
+struct BrowseModel {
+    bool open = false;
+    BrowseFocus focus = BrowseFocus::Name;
+    std::string text[kBrowseFields];      // what is typed into the six panes (same order as BrowseFocus)
+    EditState edit[kBrowseFields];        // caret + marked range of each
+    int cursor = 0;                       // hovered result
+    // Refreshed from RadioBrowser::snapshot() before every frame.
+    BrowseState state = BrowseState::Idle;
+    std::string message;                  // error text / "no stations found"
+    std::string server;                   // host that answered
+    std::shared_ptr<const std::vector<BrowseStation>> results;
+    std::string flash;                    // status line ("Added ...")
+    mutable int marquee_row = -1;
+    mutable double marquee_since = 0.0;
+};
+
+// ---- STATION LISTS menu (Shift+P) ---------------------------------------------------------------------
+// Laid out like the player's playlist editor, two tabs (ALT+Left/Right):
+//   1: CREATE / EDIT      name field | SEARCH ALL STATIONS | STATIONS (library) beside LIST CONTENTS (what is being built)
+//   2: SAVED STATION LISTS  SEARCH STATION LISTS | STATION LISTS (ENTER loads the hovered one into tab 1)
+// TAB cycles the panes of the current tab.
+enum class ListFocus { Name, Search, Stations, Contents };      // tab 1
+enum class ListManageFocus { Search, List };                    // tab 2
+
+struct ListMenuModel {
+    bool open = false;
+    int tab = 0;                          // 0 = CREATE / EDIT, 1 = SAVED STATION LISTS
+    // --- tab 1: the list being built
+    ListFocus focus = ListFocus::Name;
+    std::string name;                     // the list's name (what [s] / HOME saves it under)
+    EditState name_edit;
+    std::vector<int> items;               // stations of the list being built, in the order they were added
+    int item_cursor = 0;
+    std::string search;                   // SEARCH ALL STATIONS (name, genre, country)
+    EditState search_edit;
+    std::vector<int> visible;             // station indices passing `search`, sorted by `sort_az`
+    int cursor = 0;                       // position within `visible`
+    bool sort_az = false;                 // SHIFT+T in STATIONS: false = list order (as added to stations.txt), true = name A-Z
+    bool dirty = false;                   // unsaved changes in tab 1 (ESC asks first)
+    // --- tab 2: the saved lists
+    ListManageFocus mfocus = ListManageFocus::List;
+    std::string msearch;
+    EditState msearch_edit;
+    std::vector<int> mvisible;            // indices into UiModel::lists passing `msearch`
+    int mcursor = 0;
+    // --- prompts (shown instead of the hint lines, like the player's "Save changes ... before exiting?")
+    bool confirm_exit = false;
+    bool confirm_delete = false;
+    std::string flash;                    // status line under the hints
+    mutable int marquee_row = -1;         // hovered row of STATIONS / LIST CONTENTS / STATION LISTS (one pane is hovered at a time)
+    mutable double marquee_since = 0.0;
+    mutable int marquee2_row = -1;
+    mutable double marquee2_since = 0.0;
+};
+
+// The RADIO SETTINGS screen (key `s`). The renderer only needs the cursor and the cell being edited; the values
+// themselves live in the RadioSettings that is passed to render_radio_frame().
+struct SettingsModel {
+    bool open = false;
+    int tab = 0;                  // 0 = COLORS, 1 = ON/OFF, 2 = ANIMATION, 3 = PATHS
+    int row = 0;                  // COLORS: 0 .. kColorRowCount-1, ON/OFF: 0 .. kOnOffRowCount-1
+    int col = 0;                  // 0 = first cell of the row, 1 = second cell
+    bool editing = false;
+    std::string buffer;           // text of the cell being edited
+    EditState edit;
+    std::string status;           // last line under the hints ("Saved ...", "Not a colour: ...")
+    bool dirty = false;           // changed since the last save
+};
+
+// ---- LISTENING HISTORY menu (Shift+H): 1 HISTORY | 2 TOP CHANNELS | 3 HABITS ----------------------------------
+// On the HISTORY tab `y` opens a small overlay: the hovered entry's "artist title" is searched on YouTube and a result
+// can be downloaded into the download folder (the music player's own search + yt-dlp download, see radio_yt.h).
+struct HistoryModel {
+    bool open = false;
+    int tab = 0;                          // 0 = HISTORY, 1 = TOP CHANNELS, 2 = HABITS
+    int cursor = 0;                       // HISTORY: hovered line (0 = newest)
+    int top_cursor = 0;                   // TOP CHANNELS: hovered row
+    bool most_first = true;               // TOP CHANNELS order (r flips it)
+    mutable int scroll = 0;               // HABITS: first visible line (clamped while rendering)
+    std::string flash;                    // status line
+    const RadioHistory* hist = nullptr;   // the store (owned by main)
+    long long now = 0;                    // unix seconds, for "today" and the busiest-hour figures
+    // --- the YouTube overlay
+    bool yt_open = false;
+    std::string yt_text;                  // the query (prefilled with "artist title")
+    EditState yt_edit;
+    bool yt_in_field = true;              // false: the results list has the keys
+    int yt_cursor = 0;
+    YtSnapshot yt;                        // refreshed from RadioYt::snapshot() before every frame
+    std::string yt_dir;                   // where a download goes (shown in the overlay)
+};
+
+// ---- the big STATIONS overlay (key L) ----------------------------------------------------------------
+// An expansion of the main STATIONS pane: it shows (and edits) the very same state as the main screen -- the same search
+// box (`/`, `p:` searches the station lists, ENTER opens one), `visible`, `cursor`, sort and active list -- just with the
+// whole screen for the rows and one more column (the PRESET NAME). `a` adds a station by its stream URL, SHIFT+C sets the
+// hovered station's second name for the PRESETS pane.
+struct StationsOverlay {
+    bool open = false;
+    std::string flash;
+    mutable int marquee_row = -1;
+    mutable double marquee_since = 0.0;
+    // `a`: add a station by URL (TAB switches URL <-> NAME; an empty NAME becomes the host name)
+    bool add_open = false;
+    int add_field = 0;
+    std::string add_url, add_name, add_error;
+    EditState add_edit[2];
+    // SHIFT+C: the PRESET NAME of station `alias_idx` (empty = back to the station's own name)
+    bool alias_open = false;
+    int alias_idx = -1;
+    std::string alias_text;
+    EditState alias_edit;
+};
+
+struct UiModel {
+    // Terminal graphics (oscilloscope "image" style): what the terminal speaks, its cell size in pixels, and the picture the
+    // last frame produced (written by render_radio_frame, sent by the main loop).
+    GfxProto gfx_proto = GfxProto::None;
+    int cell_w = 10, cell_h = 20;
+    bool gfx_due = true;
+    mutable GfxFrame gfx;
+    mutable int gfx_last_crop = -1;
+    const std::vector<Station>* stations = nullptr;
+    std::vector<int> presets;     // the ACTIVE preset's slots: kPresetCount station indices (-1 = empty), slot i <-> kPresetKeys[i]
+    std::vector<PresetBank> banks;// all presets (names + slots); banks[bank_active].slots is only refreshed from `presets` on save/switch
+    int bank_active = 0;
+    MenuModel menu;
+    BrowseModel browse;
+    std::vector<StationList> lists;   // the saved station lists (stationlists.txt)
+    ListMenuModel lmenu;
+    SettingsModel settings;
+    HistoryModel hmenu;
+    StationsOverlay stov;
+    mutable int pmarquee_row = -1;       // the tuned preset entry whose name scrolls in the PRESETS pane (-1 = none)
+    mutable double pmarquee_since = 0.0;
+    // Small overlay over the main screen: 1 = oscilloscope tuning (SHIFT+O), 2 = loudness normalisation (SHIFT+V).
+    int overlay = 0;                // 3 = sleep timer (SHIFT+Z), 4 = equaliser (SHIFT+E)
+    EqUi eq;                        // the equaliser overlay's own state
+    int sleep_running = 0;          // the minute choice that is running (0 = no timer)
+    double sleep_left = 0.0;        // seconds until it stops
+    double sleep_fade_sec = 0.0;    // length of the fade-out of the running / selected timer (0 = fade off)
+    int overlay_row = 0;
+    bool sort_az = false;         // SHIFT+T: the main STATIONS pane (and its search results) sorted by name A-Z instead of list order
+    bool shuffle = true;          // station-surf mode shown in the small box next to SEARCH: true = "S" (shuffle), false = "L" (list); toggled with M
+    std::string notice;           // one status line in the SEARCH box's hint spot ("recording saved ..."); main clears it after a few seconds
+    bool cheat_open = false;      // the full-screen CHEATSHEET ('?'); drawn instead of the radio screen / menu
+    mutable int cheat_scroll = 0; // in display lines; clamped while rendering (the renderer is const)
+    std::vector<int> visible;     // station indices that pass the search filter, in list order
+    int cursor = 0;               // position within `visible`
+    // Main search box: "p:" typed into the empty box (or "/p:") searches the STATION LISTS instead of the stations; the
+    // STATIONS pane then shows the matching lists (`lvisible`, indices into `lists`). ENTER on one shows its stations in
+    // the pane (`active_list`) until ESC; "s:" switches the box back to stations.
+    bool search_lists = false;
+    std::vector<int> lvisible;
+    int lcursor = 0;
+    std::string active_list;      // name of the station list the STATIONS pane shows ("" = all stations)
+    std::string search;
+    EditState search_edit;        // caret + marked range inside `search` (only drawn while search_focus)
+    bool search_focus = false;
+    int cols = kUiCols;           // real terminal size (the frame adapts to it, see above)
+    int rows = kUiRows;
+    // Marquee state for the hovered station row (same idea as the player's list): which row the scroll
+    // follows and when it started, so moving the cursor restarts the scroll from the beginning.
+    mutable int marquee_row = -1;
+    mutable double marquee_since = 0.0;
+    double t_sec = 0.0;           // animation clock (lamp blink)
+    SignWave wave;
+    double dt = 0.033;            // seconds since the previous frame (visualizer motion)
+};
+
+std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus& st,
+                                            RadioEngine& engine, const RadioSettings& cfg);
+
+// Name of the active preset ("Default" when none is loaded).
+std::string active_preset_name(const UiModel& m);
+
+// Station index -> first preset slot holding it, or -1.
+int preset_slot_of(const std::vector<int>& presets, int station_index);
+
+} // namespace muisc::radio
