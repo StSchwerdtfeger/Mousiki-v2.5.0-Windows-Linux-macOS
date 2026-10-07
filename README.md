@@ -1,6 +1,7 @@
 <div align="center">
     
-# Mousiki v2.5.0 (Windows · Linux · macOS) 🎵 
+# 📻 Mousiki v3.0.0 - Music and Radio Player 🎵 
+(Windows · Linux · macOS)  
 
 <p align="center">
   <a href="https://opensource.org/" target="_blank">
@@ -21,13 +22,15 @@
 [![Windows](https://img.shields.io/badge/Windows-x64-0078D4.svg?logo=windows&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main) [![Linux](https://img.shields.io/badge/Linux-x64-FCC624.svg?logo=linux&logoColor=black)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main) [![macOS](https://img.shields.io/badge/macOS-x64-000000.svg?logo=apple&logoColor=white)](https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port/tree/main)
 </div>
 
-Mousiki is a terminal music player that was originally built for macOS/Linux by the amazing [itzender5820/mousiki, v1.0](https://github.com/itzender5820/mousiki) for people who prefer control, simplicity, and a keyboard (mousi-**key**). This Mousiki fork lets it also run natively on Windows (including quite a bunch of modifications and additions; design maintained for obvious reasons). All credits for the design, main feature set, and the vast majority of the code goes to the original author. Since v2.5.0 the same code base builds natively on **Linux and macOS** again (see [Quick start (Linux / macOS)](#quick-start-linux--macos) or use [setup packages or portable version for all three platforms in latest release of v2.5.0](https://github.com/StSchwerdtfeger/Mousiki-v2.5.0-Windows-Linux-macOS/releases/tag/v2.5.0)). Windows remains the primary and most tested platform (only tested Linux via WSL and works fine so far, a few bugs were recently fixed; not tested for macOS and non-WSL Linux systems). Feel free to give feedback in the discussions and report issues you might experience using this modified port. 
+Mousiki is a terminal music player that was originally built for macOS/Linux by the amazing [itzender5820/mousiki, v1.0](https://github.com/itzender5820/mousiki) for people who prefer control, simplicity, and a keyboard (mousi-**key**). This Mousiki fork lets it also run natively on Windows (including quite a bunch of modifications and additions; design maintained for obvious reasons). All credits for the design, main feature set, and the vast majority of the code goes to the original author. Since v2.5.0 the same code base builds natively on **Linux and macOS** again (see [Quick start (Linux / macOS)](#quick-start-linux--macos) or use [setup packages or portable version for all three platforms in latest release of v2.5.0 (OUTDATED)](https://github.com/StSchwerdtfeger/Mousiki-v2.5.0-Windows-Linux-macOS/releases/tag/v2.5.0)). Windows remains the primary and most tested platform (only tested Linux via WSL and works fine so far, a few bugs were recently fixed; not tested for macOS and non-WSL Linux systems). Feel free to give feedback in the discussions and report issues you might experience using this modified port. 
 
 Build yourself (see [prerequisites](#prerequisites) below) **or use the installer/portable (x64) version** that is included in the latest release (since v2.1.0). A full **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** (also as [PDF](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.pdf)) walks through every entry of the in-app cheat sheet, every settings tab and every overlay.
 
 This fork exists because the original targets POSIX (Linux/macOS/Termux) and had no Windows build path at all. The Windows build uses no WSL, no MSYS runtime, no POSIX emulation layer, just a plain `mousiki.exe` built against the Win32 API and WASAPI. All Windows-specific code is guarded by `_WIN32`, so the very same sources also build on Linux (PulseAudio/PipeWire/ALSA) and macOS (CoreAudio) with the included `setup.sh`. Porting the original repository surfaced a long list of platform differences beyond the obvious ones (see [What had to change](#what-had-to-change), below), plus a small number of pre-existing bugs in the original codebase that had nothing to do with Windows and got fixed along the way.
 
-Along the Win32 port, **a lot of minor and major additions were made too**. The major ones are a e.g. a **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting done via chromaprint), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY mode ASCII-Braille oscilloscope** as an alternative to the lyrics ball and lyrics, a **10 band EQ with 12 presets** and the ability to create and save custom presets, enlarged **list/queue overlays**, **sleep timer**, a **user manual** (.md and .pdf)... Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible or switching to shuffle mode), stereo audio playback and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off via a hotkey command, an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... As mentioned, the design remained the same for obvious reasons; the design asset added is a Braille-ASCII music cassette, shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list of modifications and added features.  
+Along the Win32 port, **a lot of minor and major additions were made too**. The major ones are a e.g. **radio player mode**, **playlist menu** to create playlists from local (or downloaded) tracks, a **meta data editor** including **fetching artist/title via AcoustID** (audio fingerprinting done via chromaprint), a **listening history** (incl. the ability to add top tracks to the playback queue), an **XY mode ASCII-Braille / image oscilloscope** as an alternative to the lyrics ball and lyrics, a **10 band EQ with 12 presets** and the ability to create and save custom presets, enlarged **list/queue overlays**, **sleep timer**, a **user manual** (.md and .pdf)... Minor changes/additions are e.g. a general key to shuffle to a next title (before only the next title in the list was possible or switching to shuffle mode), stereo audio playback and loudness normalization, adding paths via the settings menu, toggling the lyrics on/off via a hotkey command, an optimized search engine for Windows (searching metadata was very slow and only available 2-3 min. after starting the app), fuzzy search (e.g. "X-Files" didn't show up when searching "X Files" without the dash), a categorized cheat sheet... As mentioned, the design remained the same for obvious reasons; the design asset added is a Braille-ASCII music cassette, shown when no track is loaded... See section [added features beyond the port](#added-features-beyond-the-port) for a full detailed list of modifications and added features.  
+
+The latest addition is the mentioned **[radio player mode](#radio-mode)** (online radio with a tuning-dial look, presets, Radio Browser search, recording option and its own listening history) that is part of the very same program: press `SHIFT` and `+` (the `*` character) to switch between the music player and the radio; the radio is closed completely when you leave it, while the player only waits in the background (playback paused), so coming back to it is instant.
 
 - **Original:** [github.com/itzender5820/mousiki](https://github.com/itzender5820/mousiki) — ender ([itzender5820](https://github.com/itzender5820))
 - **License:** Apache 2.0 — see [LICENSE](LICENSE)
@@ -43,10 +46,14 @@ My current setup looks like the last .gif and the below below. The current defau
 
 <p align="center"><img width="779" height="392" alt="grafik" src="https://github.com/user-attachments/assets/a16c6728-37e1-4124-86a4-591677656f00" /></p>
 
-## Current Status of the Port and Modification (v2.5.0, now with standalone Win_x64 setup.exe / portable version)
+The new main UI of the radio mode looks like the below:
+
+<p align="center"><img width="850" height="412" alt="image" src="https://github.com/user-attachments/assets/986ce2b5-45b6-4a5d-95e6-f45683e6c665" /></p>
+
+## Current Status of the Port and Modification (v3.0.0)
 
 For now the Mousiki port works well and also includes everything I at least wanted and made sense to me for a music player, so there might be no further major releases that add new features, except of bug-fixes that might appear to me or others in the future (feel free to start discussions or report issues!!). I might adjust the code to be more polished / robust and might optimize the setup release (Win version results currently in ~250MB size, setup itself ~80MB, portable .zip ~100MB)... Since v2.5.0 my version of Mousiki also builds on macOS/Linux again (`setup.sh`), which is a first step towards making it potentially integratable into the main branch of the original project (which still seems way too hard after dozens of comments in the last two weeks, at least from my perspective). The Linux/macOS builds are less tested than the Windows one, so reports from users on those platforms would help finalize it more. 
-Concerning potential new features: further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). An online-radio function as well as a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions, report issues you might experience using this modified port or contributing in any other way...
+Concerning potential new features: further below you'll find a list of [current Ideas on features and modifications](#Current-Ideas-on-Features-and-Modifications). The online-radio function is now included (see [radio mode](#radio-mode)); a mixtape creator would be cool, but I'll see. Again, feel free to give feedback in the discussions, report issues you might experience using this modified port or contributing in any other way...
 
 ## Quick start (Windows)
 
@@ -114,35 +121,40 @@ Note, I had a bunch of the below already installed, so I am not sure how smooth 
 | Visual Studio 2022 Build Tools, "Desktop development with C++" | compiles the app (and the `fpcalc` helper) | `winget install --id Microsoft.VisualStudio.2022.BuildTools`, then tick the C++ workload interactively — winget's silent mode won't pick it. `setup.ps1` only warns if no compiler is found. |
 | CMake ≥ 3.16 | build system | `winget install Kitware.CMake` |
 | FFmpeg | decodes Opus (miniaudio can't), `ffprobe` supplies metadata, decodes audio for the AcoustID fingerprint and writes tags in the meta editor (`ffmpeg -c copy`) | `winget install Gyan.FFmpeg` |
+| curl | radio mode only: the Radio Browser station search (`SHIFT+s` in the radio) | **nothing to install** — ships with Windows 10+ |
 | yt-dlp | online search fallback, YouTube playlists (bulk add), streaming, downloads | `winget install yt-dlp.yt-dlp` |
 | Python 3 | runs the helper scripts in `scripts/`: fast online search (`fast_yt_search.py`), AcoustID fetch (`fetch_meta.py`) and lyrics (`fetch_lyrics.py`) — the first two use the standard library only | `winget install Python.Python.3.12` |
 | Python package `requests` | lyrics only (`fetch_lyrics.py` / `lrc.py`) | `py -3 -m pip install requests` (done by `setup.ps1`) |
 | `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
 
-All of the runtime tools (FFmpeg, yt-dlp, Python) are independent of each other and of the core player. With none of them installed, local playback of MP3/FLAC/WAV etc. still works (Opus/some other formats need FFmpeg). 
+All of the runtime tools (FFmpeg, yt-dlp, Python) are independent of each other and of the core player. With none of them installed, local playback of MP3/FLAC/WAV etc. still works (Opus/some other formats need FFmpeg); ; the radio mode cannot play anything without FFmpeg.  
 
 MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
-`third_party/` (miniaudio v0.11.25, kissfft, chromaprint 1.6.1 for the AcoustID meta data fetch) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if one of them is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause, Chromaprint is MIT but — because it bundles some FFmpeg code — is to be treated as LGPL-2.1 as a whole (see `third_party/chromaprint/LICENSE.md` and the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
+`third_party/` (miniaudio v0.11.25, kissfft, chromaprint 1.6.1 for the AcoustID meta data fetch, miniz 3.0.2 — MIT — which compresses the pictures of the oscilloscope's image style) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if one of them is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause, Chromaprint is MIT but — because it bundles some FFmpeg code — is to be treated as LGPL-2.1 as a whole (see `third_party/chromaprint/LICENSE.md` and the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
 
 ## Use Windows Terminal
 
 The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TERMINAL_PROCESSING` at startup and exits with a clear message if that fails, rather than rendering garbage. Windows Terminal (`wt.exe`) works; the legacy conhost window on pre-1511 Windows builds does not.
 
-## Where your files go
+## Where your files go (Windows)
 
 `$HOME` doesn't exist on Windows, and the original codebase looks it up in seven different places to find its directories. Rather than rewrite all seven call sites to be platform-aware, this port points `HOME` at `%USERPROFILE%` for its own process at startup, so every one of those paths resolves exactly the way it does on Linux/macOS:
 
-| | Path |
+|| | Path |
 |---|---|
 | Config | `%USERPROFILE%\.config\mousiki\config.txt` |
 | Cache (downloaded/streamed tracks) | `%USERPROFILE%\.cache\mousiki\` |
 | Log | `%USERPROFILE%\.cache\mousiki\logs\console.log` |
 | Session snapshot | `%USERPROFILE%\.cache\mousiki\snapshot\snapshot.json` |
-| Listening history | `%USERPROFILE%\.cache\mousiki\history\history.json` |
+| Listening history | `%USERPROFILE%\.cache\mousiki\history\history.json` (one folder, changeable: `HistoryPath=` or Settings → PATHS → HISTORY PATH) |
 | Meta editor session (pending edits) | `%USERPROFILE%\.cache\mousiki\meta_session\session.json` |
 | Playlists (default) | `<first LocalMusicPath>\playlists\`; falls back to `%USERPROFILE%\.cache\mousiki\playlists\` if no `LocalMusicPath` is set |
 | Fetched lyrics | `<folder of the track>\lyrics\` |
+| Radio settings | `%USERPROFILE%\.config\mousiki\radio_config.txt` (its own file; the radio never reads `config.txt`) |
+| Radio stations, presets, station lists | `%USERPROFILE%\.config\mousiki\` — `stations.txt`, `presets.txt`, `stationlists.txt`, `preset_names.txt` (defaults, changeable in the radio's Settings → PATHS) |
+| Radio listening history | `%USERPROFILE%\.config\mousiki\radio_history\` — `history_radio.txt`, `archive_radio.txt` |
+| Radio recordings / downloads | the player's download folder by default, otherwise `<path>\radio_downloads\` |
 
 `LocalMusicPath=`, `PlaylistsPath=` and `DownloadFolder=` entries accept Windows paths, both slash directions should work (`std::filesystem` normalizes them). A leading `~` is expanded to your user profile; **environment variables such as `%USERPROFILE%` are *not* expanded**, so use `~` or a full path:
 
@@ -150,7 +162,7 @@ The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TE
 LocalMusicPath=C:\Users\you\Music
 LocalMusicPath=~/Music
 ```
-Playlists folder (optional, one `PlaylistsPath=` line per folder). Without it, playlists live in `<first LocalMusicPath>\playlists`. Playlists are listed/loaded from all configured folders, saving/deleting always uses the first one.
+Playlists folder (optional, **one** `PlaylistsPath=` line; further lines are ignored; changing it in the settings copies the existing playlists there). The listening history folder works the same way (`HistoryPath=`: an existing `history.json` in the new folder is used, otherwise the current one is copied). Without it, playlists live in `<first LocalMusicPath>\playlists`. Listing, loading, saving and deleting all use that single folder.
 You can also add folders in the settings (`s`). Same goes for the (single) download folder (`DownloadFolder=`, default is `%USERPROFILE%\.cache\mousiki`), which is automatically added to the local music paths.
 
 ```
@@ -194,14 +206,15 @@ The config file is created at `~/.config/mousiki/config.txt` (the `config.txt` i
 | Tool | Why | Installed by `setup.sh` as |
 |---|---|---|
 | C++17 compiler, CMake ≥ 3.16 | builds the app and the `fpcalc` helper | `build-essential` / `gcc-c++` / `base-devel` / `build-base` + `cmake`; Xcode CLT on macOS |
+| curl | radio mode: Radio Browser station search | `curl` (macOS has it built in) |
 | ALSA + PulseAudio libraries (Linux) | audio output (miniaudio loads them at runtime; PipeWire works through `pipewire-pulse` / `pipewire-alsa`) | `libasound2-dev libpulse-dev` (apt), `alsa-lib-devel pulseaudio-libs-devel` (dnf), … |
-| FFmpeg (incl. `ffprobe`) | Opus decoding, metadata, AcoustID decoding, tag writing | `ffmpeg` (on Fedora from RPM Fusion; `setup.sh` falls back to `ffmpeg-free` and prints a hint) |
+| FFmpeg (incl. `ffprobe`) | Opus decoding, metadata, AcoustID decoding, tag writing; radio streams (needed) and MP3 recordings (`libmp3lame`; `setup.sh` warns if it is missing) | `ffmpeg` (on Fedora from RPM Fusion; `setup.sh` falls back to `ffmpeg-free` and prints a hint) |
 | yt-dlp | online search fallback, playlists, streaming, downloads | `yt-dlp` from the package manager, otherwise `pip install --user yt-dlp` (then `~/.local/bin` has to be on your `PATH`) |
 | Python 3 + `requests` | lyrics, fast online search, AcoustID fetch (`requests` is only needed for lyrics) | `python3`, `python3-requests` (or `pip install --user requests`) |
 | `xclip` / `wl-clipboard` (Linux, optional) | pasting into the search field; macOS uses the built-in `pbpaste` | `xclip` on X11, `wl-clipboard` on Wayland |
 | `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
 
-Just like on Windows, FFmpeg, yt-dlp and Python are independent of each other and of the core player: without them, local playback of MP3/FLAC/WAV etc. still works. If you prefer to install everything yourself, build manually:
+Just like on Windows, FFmpeg, yt-dlp and Python are independent of each other and of the core player: without them, local playback of MP3/FLAC/WAV etc. still works (the radio mode needs FFmpeg). The radio is built into the same binary (sources in `src_radio/`), so there is nothing extra to build or run; like the player it has only been tested on Linux so far. If you prefer to install everything yourself, build manually:
 
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
@@ -218,12 +231,18 @@ Keep the `scripts/` folder next to the binary if you move it, otherwise lyrics, 
 | Cache (downloaded/streamed tracks) | `~/.cache/mousiki/` |
 | Log | `~/.cache/mousiki/logs/console.log` |
 | Session snapshot | `~/.cache/mousiki/snapshot/snapshot.json` |
-| Listening history | `~/.cache/mousiki/history/history.json` |
+| Listening history | `~/.cache/mousiki/history/history.json` (one folder, changeable: `HistoryPath=` or Settings → PATHS → HISTORY PATH) |
 | Meta editor session (pending edits) | `~/.cache/mousiki/meta_session/session.json` |
 | Playlists (default) | `<first LocalMusicPath>/playlists/`; falls back to `~/.cache/mousiki/playlists/` if no `LocalMusicPath` is set |
 | Fetched lyrics | `<folder of the track>/lyrics/` |
+| Radio settings | `~/.config/mousiki/radio_config.txt` (its own file; the radio never reads `config.txt`) |
+| Radio stations, presets, station lists | `~/.config/mousiki/` — `stations.txt`, `presets.txt`, `stationlists.txt`, `preset_names.txt` (defaults, changeable in the radio's Settings → PATHS) |
+| Radio listening history | `~/.config/mousiki/radio_history/` — `history_radio.txt`, `archive_radio.txt` |
+| Radio recordings / downloads | the player's download folder by default, otherwise `<path>/radio_downloads/` (`~/Music/radio_downloads` if the toggle is off and the path empty) |
 
-## Default Keybindings
+## Default Keybindings (Music Player)
+
+IN GENERAL: See manual for a full detailed overview of the functionality of the current version of Mousiki. 
 
 Rebindable in `C:\Users\USER\.config\mousiki\config.txt` or in Settings → Reference (`s`). Keys written as `SHIFT+x` are the **uppercase letter** (e.g. `HKeyCycleSortMode="T"`), because the plain lowercase letter already does something else. Some commands are fixed (not rebindable): `ESC`, `Y`/`N` in prompts, `SHIFT+B`, `SHIFT+↑/↓` in the overlays, and the keys inside the playlist and meta editors including `CTRL+SHIFT+S/X`.
 See the **[user manual](Mousiki_User_Manual_v2.x.x/Mousiki_User_Guide.md)** for every command in detail or use `?` for the cheat sheet inside the app (it always shows the keys you actually have bound).
@@ -233,11 +252,13 @@ Note that macOS uses the Option key or Ctrl as substitute for ALT! When installi
 ### System
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
+| **Switch Player ↔ Radio** | `SHIFT + +` | Switch to the radio mode (and back from there). It types the `*` character, so on a German keyboard it is `SHIFT` and `+`; the cheat sheet shows the combination that fits your keyboard layout (detected automatically, `MOUSIKI_KEYBOARD=us\|de\|fr\|…` overrides it). The player is paused and waits in the background, the radio is closed completely when you leave it. Fixed key, not rebindable; `SHIFT + m` stays the meta data editor |
 | **Cheat Sheet** | `?` | List of all key commands (on German keyboards it is `SHIFT + ß`) |
 | **Settings** | `s` | Open Settings; inside Settings `s` again saves to `config.txt` and returns |
-| **Exit Settings** | `ESC` / `q` | Return without writing `config.txt` right now (config is also written on a normal quit) |
+| **Exit Settings** | `ESC` / `q` | Discard & close: changes made on the screen are reverted; while there are unsaved changes a green `* unsaved changes (saved with S or when you leave)` note is shown |
 | **Console / Logs** | `t` | Show console logs for debugging |
 | **Quit** | `q` | Quit (from the main UI) |
+| **Rescan library** | `SHIFT + r` | Rescan the music folders (e.g. after new files were copied or downloaded); also works in the meta data editor while the library pane or the fetch list has the focus. Fixed key |
 | **Home view** | `ESC` | On the main screen: back to the full local library, no search/folder filter, scrolled to top (sort mode stays) |
 | **Confirm prompt** | `Y` / `N` | Answer Yes/No prompts (clear queue, AcoustID disclaimer, ...) |
 
@@ -269,11 +290,11 @@ Note that macOS uses the Option key or Ctrl as substitute for ALT! When installi
 | **Refresh UI** | `k` | Force a full redraw (e.g. after a terminal resize) |
 | **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
-| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope's afterglow, dot threshold and tail live (`R` resets, saved on close) |
+| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope live: display (sphere / osci), style (braille / image), frame rate, decay, dot threshold, tail, line interpolation, Z axis, trace length, 45° rotation, mono phase portrait, colour palette, glow (image style) and image protocol. Each style keeps its own values (`R` resets the style in use, saved on close) |
 | **Normalization tuning** | `SHIFT + v` | Overlay to adjust the loudness normalization parameters |
 | **Lyrics timing** | `ALT + l` | Overlay to shift the lyrics of the playing track earlier / later (`←`/`→` ±0.1 s, `↑`/`↓` ±0.5 s, `R` reset, `ENTER` saves the offset into the track's `.lrc`, `ESC` cancels). |
 | **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
-| **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). Independent of the Stop play mode |
+| **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). **Fade out** (on/off, `SleepFade` in config.txt) lowers the volume over the last 10 % of the time (30 s to 10 min). Independent of the Stop play mode |
 
 ### Search
 | Action | Keybinding | Description |
@@ -319,7 +340,142 @@ Changing Fonts: In the config.txt you will also see lines like `A={A,a}`. This i
 The playlist UI starts in the Name field, where a name for the playlist can be chosen. The pane focus can be changed via TAB, the tabs of the playlist menu can be changed via ALT+LEFT/RIGHT and the playlist is saved via HOME. This was a design compromise that I did, since it starts in the name field and SHIFT+LEFT/RIGHT is reserved for marking text input... 
 In the meta data menu, the tabs can be changed via `left / right`. I guess the handling of the meta data menu needs some practice, since it is rather complex task to perform, however after fitting in it works well. To sort the list (e.g. all edited titles on top, or show only titles with no meta data, or not title or no artist) you have to set the focus on the library pane and then use `x` / `SHIFT+T` / `SHIFT+A` / `SHIFT+Y` for all missing, title missing, artist missing, year missing (press again to clear). Using metatogger can be a bit faster, however it is not the Mousi-**key** way of doing things! Gotta love the terminal. 
 
-## What had to change
+## Default Keybinding (radio player)
+### Keys (main ui screen )
+
+All of them can also be found in the in-app cheat sheet (`?`, categorized, scrollable). The keys that are not hard coded can be rebound in Settings → REFERENCE.
+
+| Action | Keybinding |
+| :--- | :--- |
+| Move in the station list | `ARROW_UP` / `ARROW_DOWN` (`j` / `k` only inside the menus) |
+| Tune the hovered station | `Enter` |
+| Next / previous channel | `n` / `b` (`b` follows the mode: `S` the channel played before, `L` the one before it in the list) |
+| Shuffle: random channel | `#` |
+| Mode `S` shuffle ↔ `L` list | `m` (the box next to SEARCH; it only affects `b`) |
+| Recall slot 1-16 of the active preset | `1 2 3 4 5 6 7 8 9 0 e r t d f g` |
+| Previous / next preset | `SHIFT + ←` / `SHIFT + →` |
+| Search | `/` (`Enter` tunes the hovered hit, `ESC` clears) |
+| Mute / unmute | `p` (with no channel loaded: tunes the hovered station like `Enter`) |
+| Volume | `+` / `-` |
+| Reconnect | `R` (capital, because `r` is a preset key) |
+| Stop | `x` |
+| Sort stations (list order ↔ name A-Z) | `SHIFT + t` |
+| Switch scope block oscilloscope ↔ sphere | `o` (rebindable) |
+| Loudness normalization / its overlay | `v` / `SHIFT + v` |
+| Equalizer overlay | `SHIFT + e` (the preset key `e` is the lowercase letter, so there is no conflict) |
+| Oscilloscope overlay | `SHIFT + o` |
+| Sleep timer | `SHIFT + z` |
+| Record the tuned stream | `y` |
+| PRESETS menu / RADIO BROWSER / STATION LISTS | `SHIFT + k` / `SHIFT + s` / `SHIFT + p` |
+| Listening history | `h` |
+| Big STATIONS overlay | `SHIFT + l` (shown as `L`) |
+| Settings | `s` |
+| Cheat sheet | `?` |
+| Switch to the music player | `SHIFT + +` (the `*` character) |
+| Quit | `q` or `CTRL + c` |
+
+### Text fields
+
+The main SEARCH box, the menus' search boxes and the name overlays edit text like the player's fields: `←/→` move the caret, `SHIFT+←/→` mark text, `HOME/END` jump to the ends, `BACKSPACE` / `DEL` delete the mark or one character, `CTRL+C` copies the mark (nothing marked: the whole field), `CTRL+X` cuts it, `CTRL+V` pastes (replacing the mark). While a text field has the keyboard `CTRL+C` copies instead of quitting and `SHIFT+←/→` marks text instead of switching the preset.
+
+### Search
+
+All searches (stations, station lists, presets, the STATION LISTS menu) are typo tolerant like the player's: an exact substring ranks first (earlier hit first), then close fuzzy matches; `-` `_` `.` `/` count as spaces. With a query the best match comes first; `SHIFT+t` (A-Z) overrides that order. The Radio Browser menu searches on the server and is not fuzzy. Lists scroll like the player's: the window only moves when the cursor leaves it; the hovered row scrolls as a marquee when its name is too long.
+
+Type `p:` into the empty search box (`/` first; `/p:` works too) to search the saved station lists: the STATIONS pane turns into STATION LISTS and filters live. `Enter` fills the STATIONS pane with that list's stations **and tunes its first station**; while a list is shown the pane title reads `STATIONS (LIST: name - ESC: all)`. `ESC` clears a search that is still in the box, the next `ESC` returns to all stations. `s:` in the empty box goes back to searching stations.
+
+### PRESETS menu (`SHIFT+k`)
+
+A **preset** is a named set of 16 station slots (keys `1234567890ertdfg`). You can keep as many as you like; the active one is shown in the title of the PRESETS pane (`PRESETS (Morning)`) and `SHIFT+←/→` switches to the previous / next one from the main screen. The full-screen menu is laid out like the player's playlist menu, top to bottom: **SEARCH STATION / SEARCH PRESET** (`s:` filters stations, `p:` presets), **SELECT PRESET** (4 columns x 2 rows of names) and **STATIONS** beside **PRESETS** (the 16 slots of the active preset). A small `◀` behind a pane's title shows which pane has the keyboard.
+
+| key | where | does |
+|---|---|---|
+| `TAB` | anywhere | next pane (SEARCH → SELECT PRESET → STATIONS) |
+| `ARROWS` (`j/k/h/l`) | SELECT PRESET / STATIONS | move |
+| `Enter` | STATIONS | tune the hovered station |
+| `Enter` | SELECT PRESET | open the hovered preset **and tune its first filled slot** |
+| `Enter` | search | tune the hovered station / open the hovered preset, then jump to that pane |
+| `SHIFT+n` / `SHIFT+c` | SELECT PRESET | new preset / rename the hovered one (small name overlay, `Enter` applies, `ESC` cancels) |
+| `1`..`0`, `e r t d f g` | STATIONS | **set the hovered station as that slot of the active preset** (same key again clears it; a station sits in one slot only, so it moves) |
+| `DEL` / `BACKSPACE` | STATIONS | remove the hovered station from the active preset |
+| `/` | STATIONS / SELECT PRESET | back to the search box |
+| `ESC` | search | clear the search; if it is already empty, close the menu |
+| `ESC` | STATIONS / SELECT PRESET | close the menu |
+
+### RADIO BROWSER menu (`SHIFT+s`)
+
+Searches the public station directory <https://www.radio-browser.info/> ([API docs](https://docs.radio-browser.info/)). Six input panes on top, **RESULTS** and **STATION INFO** (all details of the hovered result) side by side below:
+
+| pane | what you type | sent as |
+|---|---|---|
+| NAME | part of the station name | `name` |
+| TAGS | comma separated, **every** tag has to match: `rock, 80s` | `tagList` |
+| COUNTRY | a name (`Germany`) or a 2-letter code (`DE`) | `country` / `countrycode` |
+| STATE / REGION | part of the region name | `state` |
+| LANGUAGE | as Radio Browser spells it: `german` | `language` |
+| BITRATE | kbps: `128` = at least 128, `64-192` = range, `-192` = at most | `bitrateMin` / `bitrateMax` |
+
+Every search also sends `hidebroken=true`, `order=clickcount&reverse=true` (most clicked first) and `limit=200`; empty panes are left out.
+
+| key | does |
+|---|---|
+| `TAB` | NAME → TAGS → COUNTRY → STATE → LANGUAGE → BITRATE → RESULTS → NAME |
+| `Enter` | in a pane: search (the focus jumps to RESULTS when the results arrive); in RESULTS: tune the hovered station |
+| `ARROW_UP` / `ARROW_DOWN` | in a pane: one pane row up / down (down from the last row: RESULTS); in RESULTS: move the cursor |
+| `a` | in RESULTS: add the hovered station to your station list (appended, so presets keep their slots; written to `stations.txt`) |
+| `/` | in RESULTS: back to NAME |
+| `ESC` | in a pane: clear it; empty pane or RESULTS: close the menu |
+| `?` / `CTRL+c` | cheat sheet (RESULTS only) / quit (in a pane `CTRL+c` copies) |
+
+A dot in front of a result means its stream is already in your station list; results whose last check failed are dimmed (and hidden by default). A result is lit as tuned whatever way the station was tuned. Streams are compared ignoring `http`/`https`, host case, a trailing `/` and tracking parameters (`?aggregator=web`, `utm_*`, …). Tuning counts one click at Radio Browser, as the API asks. The line under the results shows what is tuned in right now (with the track title when the stream sends one). Needs `curl` on the `PATH`. Servers tried in order: `de1`, `all`, `nl1`, `at1` `.api.radio-browser.info`; the one that answered last goes first; `MOUSIKI_RADIO_API=<base url>` replaces the list (own mirror, tests). If `a` finds no `stations.txt` yet it creates one from the built-in list plus the new station.
+
+### STATION LISTS menu (`SHIFT+p`)
+
+Named, ordered collections of stations, built and managed like the player's playlist editor. Two tabs, switched with `ALT+←/→` (`Option` on macOS) from every pane; the top pane uses the settings-style tab strip.
+
+**Tab 1 - CREATE / EDIT.** The top pane's single row holds the list's `Name:` field (25 characters at most, a 25-column field that turns red while you type). Below it SEARCH ALL STATIONS (name, genre, country), then STATIONS (all stations, or the search results) beside LIST CONTENTS (what you are building). **Tab 2 - SAVED STATION LISTS.** The tab strip, SEARCH STATION LISTS and the results; `Enter` on a list moves its content into the editor on tab 1.
+
+| key | where | does |
+|---|---|---|
+| `ALT+←/→` | anywhere | switch tab |
+| `TAB` | anywhere | tab 1: name → search → STATIONS → LIST CONTENTS; tab 2: search ↔ list |
+| `Enter` | name | on to the search |
+| `Enter` | search, STATIONS | add the hovered station to the end of the list (a station is in a list once) |
+| `Enter` | LIST CONTENTS | tune the hovered station (to audition the list) |
+| `SHIFT+t` | STATIONS | sort: list order ↔ name A-Z; also sorts search results |
+| `4` / `5`, `DEL` / `BACKSPACE` / `d` | LIST CONTENTS | move the hovered station up / down, remove it |
+| `s` or `HOME` | `s`: STATIONS / LIST CONTENTS; `HOME`: every pane of tab 1 | save under the typed name, stay in the menu (same name overwrites; empty name: "enter a name first") |
+| `Enter` | tab 2 search / list | to the list / load the hovered list into tab 1 |
+| `DEL` | tab 2 list | delete the hovered list after a Yes/No prompt |
+| `/` | STATIONS, LIST CONTENTS, tab 2 list | back to the search box |
+| `ESC` | search with text | clear it |
+| `ESC` | otherwise | close; with unsaved changes on tab 1 it asks `Save changes to "x" before exiting? [Y]es [N]o [ESC] cancel` |
+
+`s` is a plain letter, so inside the name and search boxes it is typed; `HOME` saves from anywhere. Like the player, opening the menu starts a fresh list; an existing one comes back only through tab 2 → `Enter`. A dot behind a station in STATIONS means it is already in the list being built. Lists are saved to `stationlists.txt`:
+```
+[Morning drive]
+https://stream.radioparadise.com/aac-128 | Radio Paradise
+```
+Stations are matched by URL, then by name; one that has been removed from `stations.txt` is dropped when the list is read. While a list is shown in the main pane its rows are numbered by position in the list.
+
+### Big STATIONS overlay (`SHIFT+l`)
+
+The STATIONS pane with the whole screen for its rows: same search box and state as the main screen (`/`, `p:`, `s:`, `SHIFT+t`, `ESC` clears the search, leaves a list, then closes), plus a PRESET NAME column. `Enter` tunes the hovered station; `n` `b` `#` `p` `x` `+` `-` work as in the main screen. Keys that would open another menu are ignored while it is open.
+
+- `a` adds a station by its stream URL (`TAB` switches URL ↔ NAME; an empty NAME becomes the host name). It is appended to the end of the list (so the preset slots stay valid) and to `stations.txt`; a stream that is already in the list is refused.
+- `SHIFT+c` gives the hovered station a **preset name**: a shorter second name that is shown in the PRESETS pane instead of the station name (empty = the station's own name again). Stored in `preset_names.txt` (`url<TAB>name`) next to `stations.txt`; the search also looks at it. The tuned entry of the PRESETS pane scrolls as a marquee when its name does not fit.
+
+### Listening history (`h`)
+
+One fused pane with the settings-style tab strip; the bottom border carries the info (`14 lines (max 10000)`, or the sort direction). Three tabs (`1 2 3`, `←/→`, `TAB`, `ARROW_UP/DOWN`, `HOME/END`, `ESC` / `q` / `h` close):
+
+- **HISTORY** — WHEN / CHANNEL / ARTIST / TITLE / HEARD. A new line starts whenever the channel, the artist or the title changes (lines heard for less than 3 s are dropped). Hover a line and press `y`: a small overlay searches YouTube for "artist title" (the player's own online search), `Enter` downloads the hovered result (yt-dlp, opus) into the download folder; `[..]` downloading, `[ok]` done, `[!!]` failed. `TAB` edits the query, `ESC` closes the overlay.
+- **TOP CHANNELS** — channels by time listened (`r` flips most / least first).
+- **HABITS** — sessions (a 30 min gap starts a new one), time per day, channels, listening by hour of the day and by weekday.
+
+Light-weight like the player's: the newest 10 000 lines are kept in memory and in `history_radio.txt`; beyond that the oldest line is folded into `archive_radio.txt` (per-channel totals, per-day / hour / weekday seconds), so TOP CHANNELS and HABITS stay lifetime figures. (Old file names without `_radio` are migrated once.)
+
+## What had to change for the Windows port
 
 Around thirteen files needed direct `#ifdef _WIN32` branches; a similar number needed changes that apply on every platform but were only ever exposed by something Windows does differently (mostly the UTF-8 path handling below). Everything else compiled and ran unmodified. Due to the fast modifications, it became to hard to track what has changed compared the original version. Since v2.5.0 this adjusted code also builds on macOS/Linux again, additions included (`setup.sh`), so that they can eventually be added to the original branch of this fork. The Linux/macOS side has seen less testing than Windows so far; feedback from other users is welcome.
 
@@ -369,15 +525,24 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 ### Major Additions / Modifications
 
+- **Radio mode** in the same program (see [Radio mode](#radio-mode)): online radio with a tuning-dial look, ON/OFF AIR sign, 16-slot presets, Radio Browser search, station lists, recording to MP3, sleep timer, listening history, own oscilloscope/sphere and its own settings. `SHIFT` and `+` (the `*` character) switches between player and radio; the radio is closed completely when you leave it, the player waits in the background (paused) so it is back instantly. The cheat sheet shows the switch key for your keyboard layout (detected automatically, `MOUSIKI_KEYBOARD` overrides it - NOT TESTED YET IF IT FULLY WORKS).
+
+<p align="center"><img width="848" height="411" alt="image" src="https://github.com/user-attachments/assets/efac8af6-6108-4558-911c-bab5f2e36931" /></p>
+
 - **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly.
 - **Setup/portable (x64)** included in the latest release (since v2.1.0 for Win and since v2.5.0 also for Linux/macOS) as an alternative to building the app yourself. Setup size for windows is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
-- **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`.
+- **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`. Besides the braille style there is an **image style** (Osci style: image): a real pixel picture with glow, drawn by the terminal itself via the Kitty graphics protocol (Kitty, WezTerm, Ghostty, Konsole …) or Sixel (Windows Terminal 1.22+, foot, xterm …); without either the braille scope stays. `MOUSIKI_GFX=kitty|sixel|off` forces a protocol, `MOUSIKI_CELLPX=10x20` the cell size (otherwise asked from the terminal). Frame rate 30 / 45 / 60 / 90.
 
-<p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/05bb7c75-0e44-4769-b348-13c7eea584e7" /></p>
+<p align="center"><img width="849" height="400" alt="image" src="https://github.com/user-attachments/assets/a25d8ef3-fa17-4a6b-a7c5-28d214778e03" /></p>
 
-- **Sleep timer** with several options to choose from (open via `SHIFT+z`. Can be turned off gain. Timer resets after restart of the app and "off" is set as default.
+- **Settings → REFERENCE**: the *Reset all keys* line sits at the top under the cheat-sheet note, `CTRL+SHIFT+U` undoes the last 5 key changes. Keys are shown as `SHIFT+t` (not `T`); the cheat sheet aligns its description column to the longest key and wraps descriptions at 120 columns.
+- **COLORS tab** has a `TAB_NAMES` row (current / other tab name, `ColorTabCurrent` / `ColorTabOther`) like the radio; the playlist editor's name field (25 characters) sits in the tab strip.
+- **Listening history** has *Listening by hour* and *Listening by weekday* in the HABITS tab; the playlist and history menus use the settings-style tab strip; the COLORS tab shows a colour swatch next to each value.
+- **Sleep timer** with several options to choose from incl. fade-out mode (open via `SHIFT+z`). Can be turned off again. Timer resets after restart of the app and "off" is set as default.
  
- <p align="center"><img width="848" height="395" alt="grafik" src="https://github.com/user-attachments/assets/39607465-4293-47b3-a380-dd49fe936a6d" /></p>
+<p align="center"><img width="848" height="395" alt="grafik" src="https://github.com/user-attachments/assets/39607465-4293-47b3-a380-dd49fe936a6d" /></p>
+
+<p align="center"><img width="845" height="396" alt="image" src="https://github.com/user-attachments/assets/1b3d676a-69a4-45c6-ae12-b86f8be04239" /></p>
 
 - **Adjust lyrics timing** menu where an offset of max. +/-120s can be added tot he lyrics. This is specially helpful when songs where downloaded from youtube, where a video version includes scenes before the actual song starts etc.
 
@@ -393,9 +558,9 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 - **Playlist manager** - Via `SHIFT + p` or `P` respectively a playlist menu can be entered and playlists from local files can be created; search in main UI via `/p:`, hit `Enter` and its titles are added to the current queue.
 
-<p align="center"><img width="850" height="395" alt="grafik" src="https://github.com/user-attachments/assets/daa15642-6d8d-4f78-8208-4db488e9d61a" /></p>
+<p align="center"><img width="847" height="400" alt="image" src="https://github.com/user-attachments/assets/45b012e0-41b5-4508-81a4-1871bae99209" /></p>
 
-<p align="center"><img width="850" height="391" alt="grafik" src="https://github.com/user-attachments/assets/7ce6f723-ac7d-4a31-900b-efbeb24a3a10" /></p>
+<p align="center"><img width="849" height="390" alt="image" src="https://github.com/user-attachments/assets/769f37cb-9a4b-45e2-83b7-ac14bfd4b5b1" /></p>
 
 - **Meta/tag editor incl. fetch via AcoustID** (`SHIFT+M`, rebindable as `HKeyMetaEditor`) — a second full-screen overlay shaped similar to the playlist menu (tab strip, boxed panels, search field, hint/status footer) for changing a file's **name**, **artist**, **title**, **album** and **year**:
   - `TAB` cycles search field → library list → the five field rows, where typing edits the hovered field directly; `←/→` switches between the **EDIT** tab and the **FETCH LIST** tab (while a field row is being edited, `SHIFT+←/→` marks text instead).
@@ -406,30 +571,31 @@ Below is a list of major and minor addition on top of the original v1.0. The des
   - **API key**: every AcoustID request is signed with an application key that is hard-coded as `API_KEY` at the top of `scripts/fetch_meta.py` — deliberately *not* a setting, because an AcoustID key belongs to one registered application rather than to a user, and the account-key/application-key mix-up is exactly what the service answers with *"invalid API key"*. A highly modified or rebranded build should maybe register its own application (its free!) at <https://acoustid.org/new-application> and change that one line; an invalid key fails with a status line that says so (`NO_KEY`) instead of guessing from the file name.
   - **Always-autosaved session**: the pending edits are written to `~/.cache/mousiki/meta_session/session.json` after every keystroke, so ESC, quitting or crashing keeps them as a backup — the audio files themselves are *never* touched by merely editing.
   - `CTRL+SHIFT+S` applies the session (asks *"Want to save?"*) — tags go through an `ffmpeg -c copy` remux into a temp file that is renamed over the original (audio stays bit-for-bit identical), a name edit becomes a plain rename; `CTRL+SHIFT+X` throws the pending edits away (asks *"Want to discard changes?"*). Failed entries stay in the session so they can be retried. These two are deliberately **not** rebindable: the input layer reports the arrow keys as the letters A/B/C/D, so a rebindable `"B"`/`"S"` would race the arrows — the same reason `SHIFT+B` is matched directly too.
+ 
+<p align="center"><img width="848" height="392" alt="image" src="https://github.com/user-attachments/assets/7f79c059-cfe0-4d80-a832-c1a84d901b4c" /></p>
 
-<p align="center"><img width="850" height="414" alt="grafik" src="https://github.com/user-attachments/assets/01642720-6e02-4fb2-a7be-a030a16ca1f6" /></p>
+<p align="center"><img width="846" height="387" alt="image" src="https://github.com/user-attachments/assets/0d3c6e3e-1c81-4786-8e42-9be1e43ecb91" /></p>
 
-<p align="center"><img width="850" height="408" alt="grafik" src="https://github.com/user-attachments/assets/60822ff7-32f0-4e9a-ba09-bcd58f0eb2fe" /></p>
-
-- **New Screen when no title loaded in Playmode "stop" mode** Added an Braille-Ascii music cassette and centered the statement that no track is currently loaded. Not thaaat of major change, but since it adds a design feature, which I didn't do before, I listeded here. 
+- **New Screen when no title loaded in Playmode "stop" mode** Added an Braille-Ascii music cassette and centered the statement that no track is currently loaded. Not thaaat of major change, but since it adds a design feature, which I didn't do before, I listeded here.
 
 <p align="center"><img width="850" height="399" alt="grafik" src="https://github.com/user-attachments/assets/f04a4225-f4d1-48c4-a8c5-8ff9adf80a0a" /></p>
 
-- **Editable path lists in the settings panel** — Settings → PATH now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, each one row per configured path and each ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
+- **Playlist folder copy**: when the playlist path is changed in the settings, the existing playlists are copied to the new folder (nothing is moved or deleted; the music and download folders are never copied).
+- **Editable path lists in the settings panel** — Settings → PATH now has a **LOCAL PATH**, **DOWNLOAD FOLDER** section and a **PLAYLIST PATH** section, the local paths one row per configured path ending in a `(+ new path)` row that appends a new empty line to type into (Enter on it opens the field immediately). Emptying a line removes that path. `LocalMusicPath=`/`PlaylistsPath=` in config.txt still work identically. Paths in those lists:
   - are *live*: committing a local path rescans the library on the spot instead of waiting for the next launch;
-  - take effect for playlists too — playlist folders are now searched across **all** configured `PlaylistsPath=` lines (listed/loaded from every one of them, saved/deleted in the first), instead of only a single one.
+  - the playlist folder is a single path (one row, no "+ new path"); changing it copies the existing playlists over (see above).
   - yt-dlp download folder can now be set in the Setting; only one folder is possible and the folder will automatically be added to local paths, so no extra path adding necessary
 
-<p align="center"><img width="848" height="461" alt="grafik" src="https://github.com/user-attachments/assets/f0be60ad-76d9-441f-95eb-c403693c0376" /></p>
+<p align="center"><img width="849" height="390" alt="image" src="https://github.com/user-attachments/assets/10b49a1d-d66f-4b40-a829-e81416f0c416" /></p>
 
 - **Listening history** via `SHIFT+h` including the last 100 tracks that had been played, the duration of titles where resorting can be done via the `r` key (default sort is "most played tracks on top" second sort is "least played title on top"), and tracking listening habits containing average session length, time music has been played per day, tracks per session, number of skips, replays and completion rates (how many times did a song finish).
   - top tracks (top 10 / 25 / 50 / 100) can be added to the queue in the second menu tab (`TAB` switches pane, `Enter` adds). Tabs are switched with `1` / `2` / `3`.
 
-<p align="center"><img width="850" height="374" alt="grafik" src="https://github.com/user-attachments/assets/9e1b1971-5223-4f0d-b3d6-02e9da4874ba" /></p>
+<p align="center"><img width="847" height="403" alt="image" src="https://github.com/user-attachments/assets/b345041f-176b-45a0-8955-68a30b766df1" /></p>
 
-<p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/7b69dd69-81e2-4a15-a6ae-16f6d08d0f02" /></p>
+<p align="center"><img width="847" height="404" alt="image" src="https://github.com/user-attachments/assets/6fe10de4-ccad-4ef2-8f90-20994f7d4d9e" /></p>
 
-<p align="center"><img width="850" height="379" alt="grafik" src="https://github.com/user-attachments/assets/c47d2304-3d89-473d-aa12-5322619410df" /></p>
+<p align="center"><img width="849" height="399" alt="image" src="https://github.com/user-attachments/assets/dd1e4763-d72b-4d95-aaa2-51591e22e4d0" /></p>
 
 - **Stereo Playback** - Can be toggled in the settings menu. Visualizations rely on a the usual duplicate mono channel.
 - **Loudness Normalization** - Parameters can be set in the config.txt and toggled on and off via `v` and in the overlay menu tab via `SHIFT+v`, where parameters can be adjusted.
@@ -463,7 +629,6 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
 - **Long-title handling.** Track titles that overflow their column now word-wrap (up to 3 lines) in the metadata panel, aligned under the value rather than repeating the label, and marquee-scroll horizontally in the local list when a track is hovered — both width-aware for wide (CJK) characters, not just byte-counted.
 - **A Lyrics Engine toggle that actually gates fetching**, not just the panel's visibility (`+` to toggle, or Settings → On/Off) — previously the fetch ran and hit the network every single track regardless of whether the panel was shown. Toggling it off now shows the sphere visualization in that space instead of leaving it blank.
-
 ## Current Ideas on Features and Modifications 
 
 **Basic Features (that will definitely be implemented soon):**
@@ -472,6 +637,3 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 **Major New Features:**
 
 - (NOT SURE ABOUT THIS, but idea sounds nice) Apart from regular playlists a modified playlist feature could be added: pixel art cassette tapes with limited number of tracks, A/B side, which can be shared. The cassettes could consist of a number of basic components like cassette style, label style, a decent number color sets (incl. a randomizer for composing the cassette style that optionally keeps track of what had been used already in the list of "cassette mixtapes"(i.e. with or without possible color redundancies or so))), may incl. a yt-dlp feature, where you can share a "cassette files / mixtapes (.mix files)" with others which include a list of commands (youtube urls) that can be shared and uploaded to your Mousiki player (commands that initialize starting fetching songs from you tube or elsewhere(local search included)); possible royalty free art that could be adjusted for that purpose (https://pixabay.com/illustrations/search/cassette%20tape/)
-- Search online radio channels incl. a key toggle to switch to radio mode (`SHIFT+r`), slight main UI changes where the progress bar could become a radio frequency bar including turning buttons, where different chosen online channels could be assigned to certain frequencies, including a fade effect with an overlay of a selection of noisy sounds when changing the channel (would limit the number of possible channels)... Key toggles for next song (`n` and shuffle next `#` could be re-used as commands to change channels; probably makes more sense than fiddling around with arrow key (I grew up with classic radios and it was fun but also daunting)); 
-
-
