@@ -20,6 +20,7 @@
 #include "native_duration.h"
 #include "online_source.h"
 #include "oscilloscope_visualizer.h"
+#include "terminal_gfx.h"
 #include "player.h"
 #include "playlist_manager.h"
 #include "settings.h"
@@ -61,6 +62,8 @@ class App {
 public:
     App();
     int run();
+    void shutdown();                       // really end the session (also when it was suspended for the radio)
+    bool suspended() const { return suspended_; }
 
 private:
     // --- infrastructure ---
@@ -471,6 +474,15 @@ private:
     mutable std::string last_lyrics_status_;
     mutable std::chrono::steady_clock::time_point lyrics_status_shown_at_;
     mutable double viz_dt_ = 0.08;
+    // The scope as a pixel image (Settings osci_style 1): filled while the lyrics column is built, emitted by run().
+    GfxProto gfx_proto_ = GfxProto::None;
+    std::string gfx_probed_pref_;              // the protocol preference gfx_proto_ was probed for ("" = not yet)
+    mutable GfxFrame gfx_;
+    mutable bool gfx_ok_ = false;              // the picture belongs on screen in the frame just rendered
+    mutable int gfx_last_crop_ = -1;
+    mutable int cell_w_ = 9, cell_h_ = 18;
+    bool gfx_due_ = true;
+    mutable int float_rect_[4] = {0, 0, 0, 0}; // x, y, w, h of the floating panel drawn this frame (0-based cells)
 
     // --- local list marquee (hovered row's title, when too long to fit) ---
     // Tracks which row the scroll animation is currently following and
@@ -498,6 +510,16 @@ private:
 
     std::string status_line_;
     bool quit_ = false;
+    // Settings screen: the settings as they were when it opened. `s` saves and closes, ESC / q puts them back (discard).
+    Settings settings_snapshot_;
+    std::string settings_snapshot_text_;
+    bool settings_dirty_ = false;
+    void settings_open();
+    void settings_close(bool save);
+    void settings_update_dirty();
+    bool suspended_ = false;     // run() returned kExitSwitchMode: the App is kept alive and run() is called again on return
+    void rescan_now();
+    bool switch_mode_ = false;   // quit_ was set by Ctrl+Shift+M: run() returns kExitSwitchMode
     bool force_redraw_ = false;
     int last_render_w_ = -1;
     int last_render_rows_ = -1; // terminal height of the previous frame: a height change needs a full repaint too
@@ -531,7 +553,7 @@ private:
     // the full terminal would visually detach the panel from the
     // content it's supposed to be floating over. Vertically centered
     // against term_rows_, nudged up a few rows rather than dead-center.
-    void draw_floating_panel(std::ostringstream& frame, const std::vector<std::string>& lines, int panel_w, int W) const;
+    void draw_floating_panel(std::ostringstream& frame, const std::vector<std::string>& lines, int panel_w, int W, int fixed_col = 0) const;
     static constexpr int kFloatingPanelUpShift = 3; // rows nudged above true vertical center
 
     // --- console / log overlay (HKeyConsole) ----------------------------
@@ -768,6 +790,13 @@ private:
     int settings_tab_ = 0;
     int settings_row_ = 0;   // resets to 0 on every tab switch
     int settings_col_ = 0;   // 0 or 1 -- only the Colors tab has 2-cell rows
+    // REFERENCE tab: the last 5 key changes can be undone with Ctrl+Shift+U. An entry is the hotkey map from before the
+    // change and the selectable row it concerned (0 = every key was reset; undoing puts the cursor on the first key that came back).
+    struct RefUndo { std::unordered_map<std::string, std::string> hotkeys; int row = 0; };
+    std::vector<RefUndo> ref_undo_;
+    void ref_undo_push(int row);
+    void ref_undo_pop();
+    void ref_reset_keys(int row);                      // row 0: every key, else that one row (1-based like settings_row_)
     std::string color_edit_buffer_;      // live text while mode_==ColorEdit
 
     // --- caret / selection for the single-line text fields ----------------
@@ -825,7 +854,7 @@ private:
     // they can never disagree on where a row landed. The selectable rows
     // are numbered 0 .. path_row_count()-1.
     struct PathRow {
-        enum class Kind { Path, AddPath, Header };
+        enum class Kind { Path, AddPath, Header, Note };
         Kind kind = Kind::Path;
         int sel = -1;              // selectable index, -1 for headers (unselectable)
         int path_index = -1;       // Path: index inside the owning vector
@@ -835,6 +864,7 @@ private:
         // path_index = -1 that never reaches them -- every consumer
         // switches on this flag first.
         bool download_folder = false;
+        bool history_folder = false;   // Path: the single HISTORY PATH field (settings_.history_path)
         const char* label = "";    // Header: section title; AddPath: "+ new path"
     };
     // Every display row of the path section, in paint order, with `sel`
@@ -850,6 +880,7 @@ private:
     // Maps a selectable PATHS row to the display line it is drawn on,
     // headers and spacers included.
     int path_display_row(int selectable_row) const;
+    int path_display_total() const;
     // True when the given selectable PATHS row edits free text -- a path
     // row rather than a "+ new path" button -- since those need far more
     // characters than a hotkey field does. Drives the edit-buffer length
@@ -959,7 +990,7 @@ private:
     // Up/Down pick a row, Left/Right change it, R resets, ESC / Shift+O close
     // (and save the values to config.txt).
     int osci_menu_row_ = 0;
-    static constexpr int kOsciMenuPanelWidth = 44; // just wide enough for the key legend
+    static constexpr int kOsciMenuPanelWidth = 50; // just wide enough for the key legend
     std::vector<std::string> build_osci_menu_panel() const;
     void osci_menu_adjust(int dir);
     // Shift+V (HKeyNormMenu): the loudness normalisation overlay
@@ -1000,7 +1031,7 @@ private:
     bool sleep_stop_after_track_ = false;               // one-shot: end playback when the current song ends
     static constexpr int kSleepTimerPanelWidth = 44;
     std::vector<std::string> build_sleep_timer_panel() const;
-    void sleep_timer_apply(int row);                    // row of the menu: 0..4 minutes, 5 stop after song, 6 off
+    void sleep_timer_apply(int row);                    // row of the menu: 0..4 minutes, 5 stop after song, 6 fade out (toggle), 7 off
     void sleep_timer_cancel();
     void sleep_timer_tick();                            // once per frame
     std::string sleep_timer_label() const;              // "" when nothing is armed, else e.g. "SLEEP 24:10"

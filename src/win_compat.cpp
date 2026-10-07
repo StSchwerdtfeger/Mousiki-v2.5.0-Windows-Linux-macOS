@@ -449,6 +449,7 @@ int win_poll_key() {
             if (k.wVirtualKeyCode == 'X') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
             if (k.wVirtualKeyCode == 'U') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
             if (k.wVirtualKeyCode == 'Z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
+            if (k.wVirtualKeyCode == 'M') { g_last_key_was_arrow = false; return kKeyCtrlShiftM; }
         }
     }
 

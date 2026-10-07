@@ -604,13 +604,12 @@ static Settings load_from_config(const fs::path& path) {
             {"ColorLyricsInactiveFg", "inactive_line_color"}, {"ColorLyricsInactiveBg", "inactive_line_bg_color"},
             {"ColorLyricsActiveLineFg", "active_line_color"}, {"ColorLyricsActiveLineBg", "active_line_bg_color"},
             {"ColorLyricsActiveWordFg", "active_word_color"}, {"ColorLyricsActiveWordBg", "active_word_bg_color"},
-            {"ColorHeader", "header_color"}, {"ColorLegend", "legend_color"},
+            {"ColorHeader", "header_color"}, {"ColorLegend", "legend_color"}, {"ColorTabCurrent", "tab_current_color"}, {"ColorTabOther", "tab_other_color"},
             {"MetaDataOnly", "meta_only"},
             {"ElimentDisk", "Eliment_disk"}, {"ElimentDummyButtons", "Element_dummy_buttons"},
             {"ElimentQueue", "Eliment_queue"}, {"ElimentWaveForm", "Eliment_waveform_progress_bar"},
             {"ElimentLyrics", "Eliment_lyrics"}, {"LyricsPlaceholderBall", "Eliment_lyrics_placeholder_ball"},
             {"LyricViz", "lyric_viz"},
-            {"OsciDecay", "osci_decay"}, {"OsciDotThreshold", "osci_dot_threshold"}, {"OsciTailBrightness", "osci_tail_brightness"},
             {"Visualizer", "Eliment_visualizer"},
             {"VisualizerFluidity", "visualizer_fluidity"}, {"DiskRotationSpeed", "disk_rotation_speed"},
             {"VisualizerDegradationSpeed", "visualizer_degradation_speed"}, {"VisualizerViscosity", "visualizer_viscosity"},
@@ -620,6 +619,7 @@ static Settings load_from_config(const fs::path& path) {
             {"Vertical", "vertical"}, {"Horizontal", "horizontal"},
             {"Seprator", "seprator"}, {"ListSeparator", "list_separator"},
         };
+        if (osci_config_key(s, key, value)) continue;
         {
             auto it = kKeyAliases.find(key);
             if (it != kKeyAliases.end()) key = it->second;
@@ -660,9 +660,6 @@ static Settings load_from_config(const fs::path& path) {
             continue; // anything unrecognized keeps the current value
         }
         if (key == "osci_stereo") continue; // retired setting: old configs may still contain it, it is ignored
-        if (key == "osci_decay") { try { s.osci_decay = std::clamp(std::stof(value), 0.00f, 0.99f); } catch (...) {} continue; }
-        if (key == "osci_dot_threshold") { try { s.osci_dot_threshold = std::clamp(std::stof(value), 0.01f, 1.00f); } catch (...) {} continue; }
-        if (key == "osci_tail_brightness") { try { s.osci_tail_brightness = std::clamp(std::stof(value), 0.0f, 1.0f); } catch (...) {} continue; }
         if (key == "lyrics_alignment") {
             std::string v = value;
             for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -732,6 +729,8 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "border_color") { if (!value.empty()) s.border_color = normalize_color_value(value); continue; }
         if (key == "border_color_bottom") { if (!value.empty()) s.border_color_bottom = normalize_color_value(value); continue; }
         if (key == "header_color") { if (!value.empty()) s.header_color = normalize_color_value(value); continue; }
+        if (key == "tab_current_color") { if (!value.empty()) s.tab_current_color = normalize_color_value(value); continue; }
+        if (key == "tab_other_color") { if (!value.empty()) s.tab_other_color = normalize_color_value(value); continue; }
         if (key == "legend_color") { if (!value.empty()) s.legend_color = normalize_color_value(value); continue; }
         if (key == "active_line_color") { if (!value.empty()) s.active_line_color = normalize_color_value(value); continue; }
         if (key == "active_line_bg_color") { if (!value.empty()) s.active_line_bg_color = normalize_color_value(value); continue; }
@@ -834,6 +833,7 @@ static Settings load_from_config(const fs::path& path) {
         }
 
         // --- Autosave / session snapshot --------------------------------
+        if (key == "SleepFade") { s.sleep_fade = parse_bool(value); continue; }
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
         if (key == "AutoSaveIndicator") { s.autosave_indicator = parse_bool(value); continue; }
         if (key == "AutoSaveDelayInSec") { try { s.autosave_delay_sec = std::max(1, std::stoi(value)); } catch (...) {} continue; }
@@ -889,7 +889,7 @@ static Settings load_from_config(const fs::path& path) {
                 const char* home = std::getenv("HOME");
                 if (home) path = std::string(home) + path.substr(1);
             }
-            if (!path.empty()) s.playlists_paths.push_back(path);
+            if (!path.empty() && s.playlists_paths.empty()) s.playlists_paths.push_back(path);   // ONE playlist folder: further lines are ignored
             continue;
         }
 
@@ -900,6 +900,15 @@ static Settings load_from_config(const fs::path& path) {
         // materialising the default into the file) is what lets a changed
         // default take effect without rewriting anyone's config.txt.
         // Same ~ expansion as LocalMusicPath, above.
+        if (key == "HistoryPath" || key == "history_path") {
+            std::string path = trim(unquote(value));
+            if (!path.empty() && path[0] == '~') {
+                const char* home = std::getenv("HOME");
+                if (home) path = std::string(home) + path.substr(1);
+            }
+            if (!path.empty()) s.history_path = path;
+            continue;
+        }
         if (key == "DownloadFolder" || key == "download_folder") {
             std::string path = trim(unquote(value));
             if (!path.empty() && path[0] == '~') {
@@ -1031,14 +1040,7 @@ Settings load_settings() {
     return s;
 }
 
-void save_settings(const Settings& s) {
-    fs::path p = config_path();
-    std::error_code ec;
-    fs::create_directories(p.parent_path(), ec);
-
-    std::ofstream out(p, std::ios::trunc);
-    if (!out.is_open()) return;
-
+static void write_settings(std::ostream& out, const Settings& s) {
     out << "# Mousiki Configuration File\n";
     out << "# Location: $HOME/.config/mousiki/config.txt\n";
     out << "\n";
@@ -1063,6 +1065,7 @@ void save_settings(const Settings& s) {
     out << "\n# Key command legends (the grey hint lines such as \"[ESC] close\" in the Settings, the big\n";
     out << "# list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default\n";
     out << "ColorLegend=" << s.legend_color << "\n";
+    out << "ColorTabCurrent=" << s.tab_current_color << "\nColorTabOther=" << s.tab_other_color << "\n";
     out << "\n# List\n";
     out << "ColorListInactiveFg=" << s.list_color << "\n";
     out << "ColorListInactiveBg=" << s.list_inactive_bg_color << "\n";
@@ -1098,10 +1101,8 @@ void save_settings(const Settings& s) {
     out << "LyricViz=" << (s.lyric_viz == 1 ? "osci" : "sphere") << "\n";
     out << "## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)\n";
     out << "## Pick it live from this tab's \"Lyric Viz\" row (replaces the old LyricsPlaceholderBall on/off).\n";
-    out << "OsciDecay=" << s.osci_decay << "\n## afterglow, 0.00 to 0.99 (higher = longer trails)\n";
-    out << "OsciDotThreshold=" << s.osci_dot_threshold << "\n## 0.01 to 1.00 (lower = thicker line)\n";
-    out << "OsciTailBrightness=" << s.osci_tail_brightness << "\n## 0.00 to 1.00 (brightness of the oldest part of the trace)\n";
-    out << "## Tune these three live with SHIFT+O in the main UI\n";
+    osci_config_write(out, s);
+    out << "## Tune all of these live with SHIFT+O in the main UI\n";
     out << "Visualizer=" << tf(s.element_visualizer) << "\n";
     out << "MetaDataOnly=" << tf(s.meta_only) << "\n";
     out << "## true  = the (search-)lists show embedded metadata only -- the title tag is used\n";
@@ -1192,6 +1193,7 @@ void save_settings(const Settings& s) {
     out << "##-------------------------------------------\n";
     out << "##             AUTOSAVE / SESSION SNAPSHOT\n";
     out << "##-------------------------------------------\n\n";
+    out << "SleepFade=" << tf(s.sleep_fade) << "\n## sleep timer: fade the volume out over the last 10 % of the time (30 s .. 10 min), then pause\n";
     out << "AutoSave=" << tf(s.autosave_enabled) << "\n## resume exact song/position/queue/repeat/shuffle next launch\n";
     out << "AutoSaveIndicator=" << tf(s.autosave_indicator) << "\n";
     out << "AutoSaveDelayInSec=" << s.autosave_delay_sec << "\n";
@@ -1240,6 +1242,10 @@ void save_settings(const Settings& s) {
     for (const auto& path : s.playlists_paths) {
         if (!path.empty()) out << "PlaylistsPath=" << path << "\n";
     }
+    if (!s.history_path.empty()) {
+        out << "\n# Folder of the listening history (history.json; one folder, unset means ~/.cache/mousiki/history).\n";
+        out << "HistoryPath=" << s.history_path << "\n";
+    }
     if (!s.download_folder.empty()) {
         out << "\n# Where yt-dlp downloads go (one folder; unset means ~/.cache/mousiki).\n";
         out << "# The folder below is also added to the local music paths automatically.\n";
@@ -1274,6 +1280,22 @@ void save_settings(const Settings& s) {
     out << "ClassTextAboutApp= {\n\n";
     for (const auto& l : s.about_app_lines) out << l << "\n";
     out << "\n\n};\n";
+}
+
+std::string settings_to_text(const Settings& s) {
+    std::ostringstream out;
+    write_settings(out, s);
+    return out.str();
+}
+
+void save_settings(const Settings& s) {
+    fs::path p = config_path();
+    std::error_code ec;
+    fs::create_directories(p.parent_path(), ec);
+
+    std::ofstream out(p, std::ios::trunc);
+    if (!out.is_open()) return;
+    write_settings(out, s);
 }
 
 } // namespace muisc

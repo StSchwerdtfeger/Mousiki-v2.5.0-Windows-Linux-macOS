@@ -1,8 +1,12 @@
 #include "app.h"
+#include "mode_switch.h"
+#include "keyboard_layout.h"
 #include "path_utf8.h"
 #include "utf8_util.h"
 #include "console_log.h"
+#include <cstring>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -870,6 +874,7 @@ App::App() {
     // ask where a download would go. Empty config = default cache folder,
     // which is what set_download_dir() restores on its own.
     cache_.set_download_dir(path_from_utf8(settings_.download_folder));
+    history_.set_dir(settings_.history_path);
     history_.load(); // listening history: a missing/corrupt file is not fatal (see HistoryStore::load)
     set_emoji_replacement(settings_.replace_emoji);
     player_.set_stereo(settings_.stereo);
@@ -1165,6 +1170,48 @@ void App::resort_local_view_keep_selection() {
     }
     scroll_ = std::max(0, selected_ - list_nav_rows() / 2);
     if (scroll_ > selected_) scroll_ = selected_;
+}
+
+void App::settings_open() {
+    settings_snapshot_ = settings_;
+    settings_snapshot_text_ = settings_to_text(settings_);
+    settings_dirty_ = false;
+}
+
+void App::settings_update_dirty() {
+    settings_dirty_ = settings_to_text(settings_) != settings_snapshot_text_;
+}
+
+// `s`: write config.txt and leave. ESC / q: leave and put back everything the screen changed.
+void App::settings_close(bool save) {
+    if (save) {
+        save_settings(settings_);
+        status_line_ = "SAVED";
+    } else {
+        settings_update_dirty();
+        if (settings_dirty_) {
+            const Settings before = settings_;
+            settings_ = settings_snapshot_;
+            // what was applied live while the screen was open
+            cache_.set_download_dir(path_from_utf8(settings_.download_folder));
+            if (before.history_path != settings_.history_path) {
+                history_end_current_play();
+                history_.save();
+                history_.set_dir(settings_.history_path);
+                if (history_.file_exists()) history_.load(); else history_.save();
+            }
+            player_.set_stereo(settings_.stereo);
+            player_.set_normalization(settings_.normalize, static_cast<float>(settings_.normalize_target_lufs),
+                                      static_cast<float>(settings_.normalize_max_boost_db));
+            set_emoji_replacement(settings_.replace_emoji);
+            if (before.local_music_paths != settings_.local_music_paths || before.download_folder != settings_.download_folder)
+                rescan_library();
+            force_redraw_ = true;
+        }
+        status_line_.clear();
+    }
+    settings_dirty_ = false;
+    mode_ = Mode::Browse;
 }
 
 // Re-runs the local library scan over whatever settings_.local_music_paths
@@ -2456,6 +2503,47 @@ void App::commit_bulk_add(bool all) {
 // plain string->string map), so reordering/recategorizing rows here is
 // always safe -- rebinding still keys off the action name, never off the
 // row's position.
+// How a key is shown in the cheat sheet and on the REFERENCE tab: a capital letter is a Shift press, so "T" reads
+// "SHIFT+t" (the key stays "T" in config.txt and while it is being edited); literal labels such as "SHIFT+T" or
+// "CTRL+SHIFT+Z" get the same lower-case letter.
+static std::string pretty_key(const std::string& k) {
+    if (k == "@SWITCHKEY") return mode_switch_key_label();   // the mode-switch key, named for this keyboard (keyboard_layout.h)
+    if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return std::string("SHIFT+") + static_cast<char>(k[0] + 32);
+    std::string o = k;
+    size_t p = 0;
+    while ((p = o.find("SHIFT+", p)) != std::string::npos) {
+        p += 6;
+        if (p < o.size() && o[p] >= 'A' && o[p] <= 'Z' && (p + 1 >= o.size() || !std::isalpha(static_cast<unsigned char>(o[p + 1]))))
+            o[p] = static_cast<char>(o[p] + 32);
+    }
+    return o;
+}
+
+// Word-wraps `text` into lines of at most `width` columns (a longer single word is cut).
+static std::vector<std::string> wrap_words(const std::string& text, int width) {
+    std::vector<std::string> out;
+    std::string cur;
+    size_t i = 0;
+    while (i <= text.size()) {
+        const size_t j = text.find(' ', i);
+        std::string word = text.substr(i, j == std::string::npos ? std::string::npos : j - i);
+        while (width > 0 && display_width(word) > width) {      // one word longer than the line: cut it
+            if (!cur.empty()) { out.push_back(cur); cur.clear(); }
+            const std::string head = truncate_str(word, width);
+            if (head.empty()) break;
+            out.push_back(head);
+            word = word.substr(head.size());
+        }
+        if (cur.empty()) cur = word;
+        else if (display_width(cur) + 1 + display_width(word) <= width) cur += " " + word;
+        else { out.push_back(cur); cur = word; }
+        if (j == std::string::npos) break;
+        i = j + 1;
+    }
+    if (!cur.empty() || out.empty()) out.push_back(cur);
+    return out;
+}
+
 struct RefHotkeyRow { const char* header; const char* action; const char* label; };
 static const RefHotkeyRow kRefRows[] = {
     // --- Playback ---
@@ -2535,7 +2623,7 @@ static const char* const kRefNote = "SEE CHEAT SHEET FOR FULL LIST OF COMMANDS, 
 // Every row-index translation on this tab (ref_display_row(), the scroll
 // window, settings_max_row(), the Enter-to-edit guard) has to go through
 // these two constants.
-static constexpr int kRefStart = 0;
+static constexpr int kRefStart = 1;   // selectable row 0 is the "Reset All Keys To Default" line, right under the note
 static constexpr int kRefEnd = kRefStart + kRefRowCount;
 
 // The ON/OFF tab's toggle rows, in paint order -- and that order IS the
@@ -2601,12 +2689,8 @@ std::vector<App::PathRow> App::build_path_rows() const {
     // load/rescan, so setting it is all it takes for downloads to appear
     // in the library.
     {
-        PathRow h;
-        h.kind = PathRow::Kind::Header;
-        h.label = "DOWNLOAD PATH";
-        rows.push_back(h);
-
         PathRow d;
+        d.label = "DOWNLOAD PATH";
         d.kind = PathRow::Kind::Path;
         d.sel = sel++;
         d.path_index = -1; // no vector index: d.download_folder says who owns it
@@ -2614,7 +2698,37 @@ std::vector<App::PathRow> App::build_path_rows() const {
         rows.push_back(d);
     }
 
-    add_path_section("PLAYLIST PATH", true);
+    // PLAYLIST PATH: ONE folder (stored as playlists_paths[0]), like the download folder: no list, no "+ new path".
+    {
+        PathRow p;
+        p.label = "PLAYLIST PATH";
+        p.kind = PathRow::Kind::Path;
+        p.sel = sel++;
+        p.path_index = 0;
+        p.playlist_path = true;
+        rows.push_back(p);
+
+        PathRow n;
+        n.kind = PathRow::Kind::Note;
+        n.label = "Changing it copies the existing playlists to the new folder.";
+        rows.push_back(n);
+    }
+
+    // HISTORY PATH: ONE folder (settings_.history_path) that holds history.json.
+    {
+        PathRow p;
+        p.label = "HISTORY PATH";
+        p.kind = PathRow::Kind::Path;
+        p.sel = sel++;
+        p.path_index = -1;
+        p.history_folder = true;
+        rows.push_back(p);
+
+        PathRow n;
+        n.kind = PathRow::Kind::Note;
+        n.label = "An existing history.json in the new folder is used, otherwise the current one is copied there.";
+        rows.push_back(n);
+    }
 
     return rows;
 }
@@ -2642,12 +2756,20 @@ bool App::path_row_is_text(int selectable_row) const {
 // lines each) are accounted for. Used by both the render block and the
 // ColorEdit cursor placement, so the two always agree on where a given
 // row lands.
+// Number of display lines of the whole PATHS list (headers 2, notes and rows 1).
+int App::path_display_total() const {
+    int disp = 0;
+    for (const PathRow& r : build_path_rows()) disp += (r.kind == PathRow::Kind::Header || (r.kind == PathRow::Kind::Path && (r.label && *r.label))) ? 2 : 1;
+    return disp;
+}
+
 int App::path_display_row(int selectable_row) const {
     int disp = 0;
     for (const PathRow& r : build_path_rows()) {
         if (r.kind == PathRow::Kind::Header) { disp += 2; continue; }
-        if (r.sel == selectable_row) return disp;
-        disp++;
+        if (r.kind == PathRow::Kind::Note) { disp++; continue; }
+        if (r.sel == selectable_row) return disp + (r.kind == PathRow::Kind::Path && (r.label && *r.label) ? 1 : 0);
+        disp += (r.kind == PathRow::Kind::Path && (r.label && *r.label)) ? 2 : 1;
     }
     return disp; // out of range: one past the end
 }
@@ -2663,8 +2785,8 @@ int App::ref_display_row(int selectable_row) const {
     int headers = 0;
     for (int i = 0; i <= selectable_row; ++i) {
         if (i < kRefEnd) {
-            if (i == kRefStart) headers += 2;    // the read-only note (blank + text), just before the hotkeys
-            if (kRefRows[i - kRefStart].header) headers += 2;
+            if (i == 0) headers += 2;            // the read-only note (blank + text), just before the reset line
+            if (i >= kRefStart && kRefRows[i - kRefStart].header) headers += 2;
         } else {
             if (i == kRefEnd) headers += 2;      // "FONT / CHARACTER MAP"
         }
@@ -2690,6 +2812,7 @@ std::string* App::color_field_ptr(int row, int col) {
         case 13: return col == 0 ? &settings_.active_word_color : &settings_.active_word_bg_color;
         case 14: return col == 0 ? &settings_.header_color : nullptr; // HEADER: text color only, no background cell
         case 15: return col == 0 ? &settings_.legend_color : nullptr; // LEGEND: text color only, no background cell
+        case 16: return col == 0 ? &settings_.tab_current_color : &settings_.tab_other_color; // TAB NAMES: current / other (both text colours)
         default: return nullptr;
     }
 }
@@ -2700,7 +2823,7 @@ int App::settings_max_row() const {
     // scrollable text (both computed dynamically, not hardcoded, so they
     // track the actual font_map/about_app_lines content).
     switch (settings_tab_) {
-        case 0: return 15; // COLOR_SCHEMA: 16 rows (the extras are HEADER and LEGEND)
+        case 0: return 16; // COLOR_SCHEMA: 17 rows (the extras are HEADER, LEGEND and TAB NAMES)
         case 1: return kOnOffToggleCount - 1; // ON/OFF: the toggles, nothing else
         case 2: return 7;  // ANIM_SCHEMA: 8 rows
         case 3: return path_row_count() - 1; // PATHS: every selectable path/"+ new path" row
@@ -2765,6 +2888,7 @@ std::string App::settings_get_value(int row, int col) const {
             }
         }
     }
+    if (settings_tab_ == 4 && row == 0) return "[ENTER] reset";
     if (settings_tab_ == 4 && row >= kRefStart && row < kRefEnd) {
         auto it = settings_.hotkeys.find(kRefRows[row - kRefStart].action);
         return it != settings_.hotkeys.end() ? it->second : "";
@@ -2777,6 +2901,7 @@ std::string App::settings_get_value(int row, int col) const {
         PathRow r = path_row(row);
         if (r.sel < 0) return "";
         if (r.kind == PathRow::Kind::Path) {
+            if (r.history_folder) return settings_.history_path.empty() ? history_.effective_dir() : settings_.history_path;
             if (r.download_folder) {
                 // Show what is actually in effect: while nothing has been
                 // configured that is the default cache folder, and the point
@@ -2789,6 +2914,7 @@ std::string App::settings_get_value(int row, int col) const {
                                                                     : settings_.local_music_paths;
             if (r.path_index >= 0 && r.path_index < static_cast<int>(paths.size()))
                 return paths[r.path_index];
+            if (r.playlist_path) return path_utf8(playlists_dir());   // nothing configured: show the folder in effect
             return "";
         }
         return ""; // AddPath: the row IS the button, it has no value
@@ -2908,6 +3034,16 @@ void App::settings_commit_edit() {
                 const char* home = std::getenv("HOME");
                 if (home) p = std::string(home) + p.substr(1);
             }
+            if (r.history_folder) {
+                // One folder: the history moves with it (an existing history.json there is read, otherwise the current one is written there).
+                history_end_current_play();
+                history_.save();
+                settings_.history_path = p;
+                history_.set_dir(p);
+                if (history_.file_exists()) history_.load(); else history_.save();
+                status_line_ = p.empty() ? "history folder: default" : "history folder: " + p;
+                return;
+            }
             if (r.download_folder) {
                 // One folder, never a list: store it (an emptied field goes
                 // back to the default cache folder), point yt-dlp at it right
@@ -2929,6 +3065,13 @@ void App::settings_commit_edit() {
             }
             std::vector<std::string>& paths = r.playlist_path ? settings_.playlists_paths
                                                               : settings_.local_music_paths;
+            // A changed PLAYLIST path takes its playlists along: the .txt files of the folder it replaces are COPIED to the
+            // new one (only ones missing there, nothing is overwritten or deleted). Music and download folders are never copied.
+            fs::path copy_from;
+            if (r.playlist_path && !p.empty()) {
+                if (r.path_index < static_cast<int>(paths.size()) && !paths[r.path_index].empty()) copy_from = path_from_utf8(paths[r.path_index]);
+                else if (paths.empty() || r.path_index == 0) copy_from = playlists_dir();   // the default folder it replaces
+            }
             if (static_cast<int>(paths.size()) <= r.path_index) paths.resize(r.path_index + 1);
             if (p.empty()) {
                 paths.erase(paths.begin() + r.path_index);
@@ -2936,6 +3079,23 @@ void App::settings_commit_edit() {
             } else {
                 paths[r.path_index] = p;
                 status_line_ = std::string(r.playlist_path ? "playlist path: " : "local path: ") + p;
+                if (!copy_from.empty()) {
+                    const fs::path to = path_from_utf8(p);
+                    std::error_code ec;
+                    int copied = 0;
+                    if (fs::is_directory(copy_from, ec) && copy_from != to) {
+                        fs::create_directories(to, ec);
+                        for (const auto& e : fs::directory_iterator(copy_from, ec)) {
+                            if (!e.is_regular_file(ec) || ascii_lower_str(path_utf8(e.path().extension())) != ".txt") continue;
+                            const fs::path dst = to / e.path().filename();
+                            if (fs::exists(dst, ec)) continue;
+                            std::error_code cec;
+                            fs::copy_file(e.path(), dst, cec);
+                            if (!cec) ++copied;
+                        }
+                    }
+                    if (copied > 0) status_line_ += "  (" + std::to_string(copied) + " playlist" + (copied == 1 ? "" : "s") + " copied from the old folder)";
+                }
             }
             if (!r.playlist_path) rescan_library(); // the whole point: paths apply without a restart
             settings_row_ = std::min(settings_row_, settings_max_row()); // the list may have shrunk by one
@@ -2985,6 +3145,53 @@ void App::settings_cycle(int dir) {
     }
 }
 
+// ---- REFERENCE tab: reset to default + undo (the radio settings work the same way) ----
+void App::ref_undo_push(int row) {
+    ref_undo_.push_back({settings_.hotkeys, row});
+    if (ref_undo_.size() > 5) ref_undo_.erase(ref_undo_.begin());
+}
+
+void App::ref_reset_keys(int row) {
+    Settings defaults;
+    apply_default_hotkeys(defaults);
+    ref_undo_push(row);
+    const auto before = settings_.hotkeys;
+    for (int i = 0; i < kRefRowCount; ++i) {
+        if (row != 0 && kRefStart + i != row) continue;
+        auto it = defaults.hotkeys.find(kRefRows[i].action);
+        if (it != defaults.hotkeys.end()) settings_.hotkeys[kRefRows[i].action] = it->second;
+    }
+    if (settings_.hotkeys == before) {
+        ref_undo_.pop_back();
+        status_line_ = row == 0 ? "all keys already have their default" : "this key already has its default";
+        return;
+    }
+    status_line_ = row == 0 ? "ALL KEYS RESET TO DEFAULT (Ctrl+Shift+U undoes it)"
+                            : std::string("default key restored for ") + kRefRows[row - kRefStart].label;
+}
+
+void App::ref_undo_pop() {
+    if (ref_undo_.empty()) { status_line_ = "nothing to undo"; return; }
+    const RefUndo u = ref_undo_.back();
+    ref_undo_.pop_back();
+    int where = u.row;
+    if (where == 0) {   // a full reset: go to the first key that comes back
+        for (int i = 0; i < kRefRowCount; ++i) {
+            auto a = u.hotkeys.find(kRefRows[i].action);
+            auto b = settings_.hotkeys.find(kRefRows[i].action);
+            const std::string va = a == u.hotkeys.end() ? "" : a->second, vb = b == settings_.hotkeys.end() ? "" : b->second;
+            if (va != vb) { where = kRefStart + i; break; }
+        }
+    }
+    settings_.hotkeys = u.hotkeys;
+    settings_tab_ = 4;
+    settings_col_ = 0;
+    settings_row_ = std::clamp(where, 0, kRefEnd - 1);
+    status_line_ = u.row == 0 ? "UNDONE: reset of all keys"
+                              : std::string("UNDONE: ") + kRefRows[u.row - kRefStart].label + " is now \"" + settings_get_value(u.row, 0) + "\"";
+    force_redraw_ = true;
+}
+
 void App::handle_settings_key(int key) {
     if (mode_ == Mode::ColorEdit) {
         // The caret can be stale by one keypress after the buffer was
@@ -3016,7 +3223,10 @@ void App::handle_settings_key(int key) {
             // the library was rescanned) -- don't bury it under the generic
             // "UPDATED".
             bool wrote_own_status = (settings_tab_ == 3 && path_row_is_text(settings_row_));
+            if (!key_name.empty()) ref_undo_push(settings_row_);
+            const auto hk_before = settings_.hotkeys;
             settings_commit_edit();
+            if (!key_name.empty() && settings_.hotkeys == hk_before && !ref_undo_.empty()) ref_undo_.pop_back();   // nothing changed
             if (!wrote_own_status) status_line_ = key_name.empty() ? "UPDATED" : ("UPDATED " + key_name);
             mode_ = Mode::Settings;
             return;
@@ -3082,6 +3292,11 @@ void App::handle_settings_key(int key) {
         return;
     }
 
+    if (key == kKeyCtrlShiftU) { ref_undo_pop(); return; }   // undo the last key change (up to 5, newest first)
+    if (key == kKeyDelete && settings_tab_ == 4 && settings_row_ >= kRefStart && settings_row_ < kRefEnd) {
+        ref_reset_keys(settings_row_);                           // the default key of this row
+        return;
+    }
     if (key == 9) { // Tab
         settings_tab_ = (settings_tab_ + 1) % kSettingsTabCount;
         settings_row_ = 0;
@@ -3091,11 +3306,8 @@ void App::handle_settings_key(int key) {
     // Explicit spec from the user, overriding the reference's own
     // key semantics for this exact case (reference's 's' saves without
     // closing; here 's' saves AND exits, Esc/q just exits without saving).
-    if (key == 's' || key == 'S') { save_settings(settings_); status_line_ = "SAVED"; mode_ = Mode::Browse; return; }
-    if (key == 27 || key == 'q' || key == 'Q') {
-        mode_ = Mode::Browse;
-        return;
-    }
+    if (key == 's' || key == 'S') { settings_close(true); return; }
+    if (key == 27 || key == 'q' || key == 'Q') { settings_close(false); return; }
     if (settings_tab_ == 5) {
         // About App: no fields to edit, but Up/Down still scroll the text.
         if (key == 'A') { if (settings_row_ > 0) --settings_row_; return; }
@@ -3107,6 +3319,7 @@ void App::handle_settings_key(int key) {
         // Reference tab: the hotkeys (kRefStart..kRefEnd-1) are editable;
         // the note above them and the font-map rows after them are
         // read-only display and never enter ColorEdit at all.
+        if (settings_tab_ == 4 && settings_row_ == 0) { ref_reset_keys(0); return; }
         if (settings_tab_ == 4 && settings_row_ >= kRefEnd) {
             return;
         }
@@ -3183,6 +3396,7 @@ void App::start_online_track(const OnlineResult& result) {
 
 void App::handle_key(int key) {
     if (key == 0) return;
+    if (key == kKeyCtrlShiftM) { switch_mode_ = true; quit_ = true; return; }   // Ctrl+Shift+M: leave for the radio mode
 
     // A meta-editor confirmation -- Shift+B's AcoustID disclaimer (raised
     // here in Browse) or Ctrl+Shift+S/D raised from the menu -- swallows every
@@ -3243,14 +3457,13 @@ void App::handle_key(int key) {
         // only this overlay takes keys. Unknown keys are ignored (the footer
         // lists every key), ESC or the overlay hotkey again closes and saves.
         const bool arrow = last_key_was_arrow();
-        if (arrow && key == 'A') { osci_menu_row_ = (osci_menu_row_ + 2) % 3; return; } // up
-        if (arrow && key == 'B') { osci_menu_row_ = (osci_menu_row_ + 1) % 3; return; } // down
+        const int osci_n = static_cast<int>(osci_visible_rows(settings_).size());
+        if (arrow && key == 'A') { osci_menu_row_ = (osci_menu_row_ + osci_n - 1) % osci_n; return; } // up
+        if (arrow && key == 'B') { osci_menu_row_ = (osci_menu_row_ + 1) % osci_n; return; }          // down
         if (arrow && key == 'D') { osci_menu_adjust(-1); return; }                      // left
         if (arrow && key == 'C') { osci_menu_adjust(+1); return; }                      // right
         if (!arrow && (key == 'r' || key == 'R')) {
-            settings_.osci_decay = 0.80f;
-            settings_.osci_dot_threshold = 0.28f;
-            settings_.osci_tail_brightness = 0.45f;
+            osci_reset(settings_);
             return;
         }
         std::string osc_action = resolve_hotkey_action(key);
@@ -3332,10 +3545,16 @@ void App::handle_key(int key) {
     if (mode_ == Mode::SleepTimer) {
         // Sleep timer. Playback keeps running underneath; only this overlay takes
         // keys. Unknown keys are ignored (the footer lists every key).
-        const int rows = 7; // 15 / 30 / 60 / 90 / 120 min, stop after song, off
+        const int rows = 8; // 15 / 30 / 60 / 90 / 120 min, stop after song, fade out, off
         const bool arrow = last_key_was_arrow();
         if (arrow && key == 'A') { sleep_menu_row_ = (sleep_menu_row_ + rows - 1) % rows; return; } // up
         if (arrow && key == 'B') { sleep_menu_row_ = (sleep_menu_row_ + 1) % rows; return; }        // down
+        if (!arrow && (key == '\r' || key == '\n') && sleep_menu_row_ == 6) {   // Fade out: a toggle, the overlay stays open
+            settings_.sleep_fade = !settings_.sleep_fade;
+            if (!settings_.sleep_fade) player_.set_fade(1.0f);
+            save_settings(settings_);
+            return;
+        }
         if (!arrow && (key == '\r' || key == '\n')) {
             sleep_timer_apply(sleep_menu_row_);
             mode_ = Mode::Browse;
@@ -3646,12 +3865,18 @@ void App::handle_key(int key) {
     // Shift+N the same way the old hardcoded "case \'n\': case \'N\':"
     // pairs always did, without having to special-case every letter
     // action individually.
+    // SHIFT and the + key (the character '*' on a German keyboard): switch to the radio mode. Fixed key. Only here, in the
+    // Browse view -- text fields and menus handled their keys above.
+    if (key == '*' && !last_key_was_arrow()) { switch_mode_ = true; quit_ = true; return; }
+    // SHIFT+R: rescan the library (new files copied/uploaded while the app runs). Fixed key.
+    if (key == 'R' && !last_key_was_arrow()) { rescan_now(); return; }
     int lookup_key = (key == '\r') ? '\n' : key;
     std::string action = resolve_hotkey_action(lookup_key);
     if (action.empty() && lookup_key >= 'a' && lookup_key <= 'z') action = resolve_hotkey_action(lookup_key - 32);
     if (action.empty() && lookup_key >= 'A' && lookup_key <= 'Z') action = resolve_hotkey_action(lookup_key + 32);
 
     if (action == "HKeySetting") {
+        settings_open();
         mode_ = Mode::Settings;
         settings_tab_ = 0;
         settings_row_ = 0;
@@ -4281,6 +4506,73 @@ static constexpr int kTapeArtWidth = 30;  // == cells per row == disk width
 // Panel builders
 // ---------------------------------------------------------------------
 
+// ---- oscilloscope colours / parameters (shared by the braille and the image style) ----
+namespace {
+void osci_temperature_rgb(float t, int& r, int& g, int& b) {
+    static const float kStops[5][4] = {{0.00f, 190, 30, 12}, {0.25f, 255, 120, 20}, {0.50f, 255, 224, 150}, {0.75f, 205, 225, 255}, {1.00f, 90, 140, 255}};
+    t = std::clamp(t, 0.0f, 1.0f);
+    for (int i = 0; i < 4; ++i) {
+        if (t <= kStops[i + 1][0]) {
+            const float k = (t - kStops[i][0]) / (kStops[i + 1][0] - kStops[i][0]);
+            r = static_cast<int>(kStops[i][1] + (kStops[i + 1][1] - kStops[i][1]) * k);
+            g = static_cast<int>(kStops[i][2] + (kStops[i + 1][2] - kStops[i][2]) * k);
+            b = static_cast<int>(kStops[i][3] + (kStops[i + 1][3] - kStops[i][3]) * k);
+            return;
+        }
+    }
+    r = 90; g = 140; b = 255;
+}
+// Colour of palette `id` (kOsciPaletteNames) at t = 0..1. 0 and 1 use the VIZ gradient of the COLORS tab.
+void osci_palette_rgb(const Settings& s, int id, float t, int& r, int& g, int& b) {
+    static const float kStops[5][5][3] = {
+        {{20, 205, 120}, {30, 225, 205}, {60, 160, 255}, {150, 95, 255}, {235, 80, 205}},
+        {{95, 35, 150}, {170, 45, 140}, {235, 70, 105}, {255, 150, 55}, {255, 232, 150}},
+        {{45, 95, 235}, {60, 170, 255}, {120, 230, 255}, {210, 250, 255}, {255, 255, 255}},
+        {{0, 255, 220}, {0, 150, 255}, {130, 65, 255}, {255, 45, 205}, {255, 100, 120}},
+        {{255, 70, 70}, {255, 175, 45}, {235, 235, 70}, {60, 225, 120}, {85, 160, 255}}};
+    t = std::clamp(t, 0.0f, 1.0f);
+    if (id <= 1) {
+        const std::string a = gradient_ansi(s.visualizer_color, s.visualizer_color_end, t);
+        if (std::sscanf(a.c_str(), "\x1b[38;2;%d;%d;%dm", &r, &g, &b) != 3) r = g = b = 220;
+        return;
+    }
+    if (id == 2) { osci_temperature_rgb(t, r, g, b); return; }
+    const int k = std::clamp(id - 3, 0, 4);
+    const float f = t * 4.0f;
+    const int i = std::min(3, static_cast<int>(f));
+    const float u = f - static_cast<float>(i);
+    r = static_cast<int>(kStops[k][i][0] + (kStops[k][i + 1][0] - kStops[k][i][0]) * u);
+    g = static_cast<int>(kStops[k][i][1] + (kStops[k][i + 1][1] - kStops[k][i][1]) * u);
+    b = static_cast<int>(kStops[k][i][2] + (kStops[k][i + 1][2] - kStops[k][i][2]) * u);
+}
+std::string osci_rgb_seq(int r, int g, int b, float k) {
+    auto sc = [k](int v) { return std::clamp(static_cast<int>(static_cast<float>(v) * k), 0, 255); };
+    return "\x1b[38;2;" + std::to_string(sc(r)) + ";" + std::to_string(sc(g)) + ";" + std::to_string(sc(b)) + "m";
+}
+std::string osci_dim_ansi(const std::string& ansi, float k) {
+    int r, g, b;
+    if (std::sscanf(ansi.c_str(), "\x1b[38;2;%d;%d;%dm", &r, &g, &b) != 3) return ansi;   // palette colour: can't scale
+    return osci_rgb_seq(r, g, b, k);
+}
+OscilloscopeVisualizer::Params osci_scope_params(const Settings& s, double dt) {
+    const OsciSet& o = s.osci();
+    OscilloscopeVisualizer::Params p;
+    // the afterglow is set per frame at 30 fps: scale by the real frame time so another frame rate keeps the same look
+    p.decay = std::pow(o.decay, static_cast<float>(std::clamp(dt, 0.004, 0.15) * 30.0));
+    p.dot_threshold = o.dot_threshold;
+    p.tail_brightness = o.tail;
+    p.interpolate = o.interp;
+    p.z_axis = o.z;
+    p.z_depth = o.z_depth;
+    p.z_source = o.z_source;
+    p.trace = o.trace;
+    p.rotate = o.rotate;
+    p.mono_phase = o.mono_phase;
+    p.glow = o.glow;
+    return p;
+}
+} // namespace
+
 std::vector<std::string> App::build_metadata_panel(int total_width) const {
     const int inner = total_width - 4;
     const int disk_w = settings_.element_disk ? disk_.width() : 0;
@@ -4509,17 +4801,38 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
                 // right border around and left stale cells on screen.
                 // Colour = the VIZ gradient swept left -> right, dimmed by
                 // the cell's brightness so the afterglow fades out.
-                OscilloscopeVisualizer::Params osci_params;
-                osci_params.decay = settings_.osci_decay;
-                osci_params.dot_threshold = settings_.osci_dot_threshold;
-                osci_params.tail_brightness = settings_.osci_tail_brightness;
+                const OsciSet& os = settings_.osci();
+                const int pal = os.palette;
+                OscilloscopeVisualizer::Params osci_params = osci_scope_params(settings_, viz_dt_);
+                bool as_image = false;
+                if (settings_.osci_style == 1 && gfx_proto_ != GfxProto::None && lyrics_w > 0) {
+                    // image style: the terminal draws the picture; the cells stay blank here and the loop emits it
+                    gfx_cell_pixels(settings_.cell_pixels, cell_w_, cell_h_);
+                    const int cw0 = std::max(4, cell_w_), ch0 = std::max(8, cell_h_);
+                    const int cwq = std::clamp(560 / lyrics_w, 4, cw0);
+                    const int chq = std::max(8, static_cast<int>(std::lround(static_cast<double>(cwq) * ch0 / cw0)));
+                    GfxFrame& g = gfx_;
+                    g.cols = lyrics_w; g.rows = viz_rows_h; g.w = lyrics_w * cwq; g.h = viz_rows_h * chq;
+                    g.col = 2 + disk_w + (settings_.element_disk ? sep_w : 2) + meta_w;
+                    g.row = 1;
+                    scope_.render_image(g.w, g.h, osci_params, g.level, g.hue);
+                    if (pal == 0) {
+                        for (int y = 0; y < g.h; ++y)
+                            for (int x = 0; x < g.w; ++x)
+                                g.hue[static_cast<size_t>(y) * g.w + x] = static_cast<uint8_t>(x * 255 / std::max(1, g.w - 1));
+                    }
+                    for (int h = 0; h < 256; ++h) {
+                        int r = 255, gr = 255, b = 255;
+                        osci_palette_rgb(settings_, pal, static_cast<float>(h) / 255.0f, r, gr, b);
+                        g.pal[static_cast<size_t>(h)] = {static_cast<uint8_t>(r), static_cast<uint8_t>(gr), static_cast<uint8_t>(b)};
+                    }
+                    g.active = true;
+                    g.fresh = gfx_due_;
+                    as_image = true;
+                    for (int i = 0; i < panel_h; ++i) lyric_rows[i] = std::string(lyrics_w, ' ');
+                }
+                if (!as_image) {
                 auto osci_cells = scope_.render(lyrics_w, viz_rows_h, osci_params);
-                auto dim_ansi = [](const std::string& ansi, float k) -> std::string {
-                    int r, g, b;
-                    if (std::sscanf(ansi.c_str(), "\x1b[38;2;%d;%d;%dm", &r, &g, &b) != 3) return ansi; // palette colour: can't scale
-                    auto sc = [k](int v) { return std::clamp(static_cast<int>(v * k), 0, 255); };
-                    return "\x1b[38;2;" + std::to_string(sc(r)) + ";" + std::to_string(sc(g)) + ";" + std::to_string(sc(b)) + "m";
-                };
                 for (int i = 0; i < static_cast<int>(osci_cells.size()) && i < panel_h; ++i) {
                     std::string colored, last_ansi;
                     for (int cell = 0; cell < lyrics_w; ++cell) {
@@ -4529,9 +4842,10 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
                             ? static_cast<float>(cell) / static_cast<float>(lyrics_w - 1) : 0.0f;
                         // 8 brightness steps keeps the escape traffic small
                         const float lvl = std::round(c.level / 255.0f * 7.0f) / 7.0f;
-                        std::string ansi = dim_ansi(gradient_ansi(settings_.visualizer_color,
-                                                                  settings_.visualizer_color_end, t),
-                                                    0.30f + 0.70f * lvl);
+                        const float k = 0.30f + 0.70f * lvl;
+                        std::string ansi;
+                        if (pal == 0) ansi = osci_dim_ansi(gradient_ansi(settings_.visualizer_color, settings_.visualizer_color_end, t), k);
+                        else { int r = 255, g = 255, b = 255; osci_palette_rgb(settings_, pal, c.hue / 255.0f, r, g, b); ansi = osci_rgb_seq(r, g, b, k); }
                         if (ansi != last_ansi) { colored += ansi; last_ansi = ansi; }
                         const int cp = 0x2800 + c.braille;
                         colored += static_cast<char>(0xE0 | (cp >> 12));
@@ -4539,6 +4853,7 @@ std::vector<std::string> App::build_metadata_panel(int total_width) const {
                         colored += static_cast<char>(0x80 | (cp & 0x3F));
                     }
                     lyric_rows[i] = colored + "\x1b[0m";
+                }
                 }
             } else {
                 auto sphere_rows = sphere_.render(lyrics_w, viz_rows_h, bars, viz_dt_);
@@ -5318,7 +5633,7 @@ void App::handle_playlist_key(int key) {
         // arrows included (edit_text_key drops them, this box has no
         // vertical anything to navigate), where the old code had to
         // blacklist 'A'/'B' so they could not be typed either.
-        if (edit_text_key(playlist_edit_name_, edit_caret_, edit_anchor_, key, 80, &playlist_status_))
+        if (edit_text_key(playlist_edit_name_, edit_caret_, edit_anchor_, key, 25, &playlist_status_))
             playlist_edit_dirty_ = true;
         return;
     }
@@ -5661,6 +5976,54 @@ std::vector<std::string> App::build_playlist_manage_panel(int total_width, int h
     return out;
 }
 
+// The settings screen's tab strip (two lines) for a pane that carries its own title on the top border:
+//   ╭─ TITLE ──────┐  [CURRENT]  ┌──┐  OTHER  ┌───────────...───╮
+//   │              └─────────────┘  └─────────┘                 │
+// Only the two outer top corners are rounded (the box corner glyphs of the settings); the indents are square.
+static std::pair<std::string, std::string> menu_tab_strip(int W, const std::string& title, const std::vector<std::string>& labels,
+                                                          int cur, const std::string& top_ansi, const std::string& bot_ansi,
+                                                          const std::string& corner_ul, const std::string& corner_ur,
+                                                          const std::string& vertical, int min_inner = 0,
+                                                          const std::string& line2 = "", int line2_cols = 0,
+                                                          const std::string& tab_cur = "", const std::string& tab_oth = "") {
+    const std::string R = "\x1b[0m";
+    auto rep = [](const std::string& s, int n) { std::string o; for (int i = 0; i < n; ++i) o += s; return o; };
+    const std::string Hz = "\u2500";
+    const int tw0 = display_width(title);
+    const int n0 = static_cast<int>(labels.size());
+    int tabs_w = 2;   // exactly one tab carries the two "[ ]" characters
+    for (const auto& l : labels) tabs_w += display_width(l) + 4;
+    tabs_w += 4 * std::max(0, n0 - 1);
+    const int natural = 1 + 1 + tw0 + 1 + std::max(5, 20 - (tw0 + 3));
+    // tab names sit at the right end: exactly three "\u2500" remain before the last corner
+    const int first_inner = std::max({natural, min_inner, W - 2 - tabs_w - 5});
+    const int dashes = first_inner - (1 + 1 + tw0 + 1);
+    std::string top = top_ansi + corner_ul + "\u2500 " + title + " " + rep(Hz, dashes) + "\u256e" + R;
+    std::string bot = bot_ansi + vertical + R +
+                      (line2.empty() ? std::string(static_cast<size_t>(first_inner), ' ')
+                                     : line2 + std::string(static_cast<size_t>(std::max(0, first_inner - line2_cols)), ' ')) +
+                      bot_ansi + "\u2570" + R;
+    int used = first_inner + 2;
+    const int n = static_cast<int>(labels.size());
+    for (int i = 0; i < n; ++i) {
+        const std::string label = i == cur ? "[" + labels[static_cast<size_t>(i)] + "]" : labels[static_cast<size_t>(i)];
+        const int tw = display_width(label) + 4;
+        top += "  " + (i == cur ? tab_cur : tab_oth) + label + R + "  ";
+        bot += bot_ansi + rep(Hz, tw) + R;
+        used += tw;
+        if (i < n - 1) {
+            top += top_ansi + "\u256d\u2500\u2500\u256e" + R;
+            bot += bot_ansi + "\u256f  \u2570" + R;
+            used += 4;
+        } else {
+            const int rest = std::max(0, W - used - 2);
+            top += top_ansi + "\u256d" + rep(Hz, rest) + corner_ur + R;
+            bot += bot_ansi + "\u256f" + R + std::string(static_cast<size_t>(rest), ' ') + bot_ansi + vertical + R;
+        }
+    }
+    return {top, bot};
+}
+
 // Assembles the full-screen playlist editor overlay. Structured like the
 // Browse view's own stack of boxed panels (a header box, then side-by-
 // side boxed sub-panels, then a plain hint/status line) rather than
@@ -5672,47 +6035,37 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
     std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
     const std::string HI = "\x1b[7m", R = "\x1b[0m";
 
-    frame << box_top("PLAYLISTS", W, border) << "\n";
-
-    // Tab strip -- built manually rather than via box_line(): box_line()
-    // measures/pads its content by (UTF-8-aware, but not ANSI-aware)
-    // display width, so embedding the reverse-video highlight before
-    // padding would miscount and corrupt the row. Same reasoning as
-    // build_list_panel()'s row construction: build plain text, measure
-    // that, then wrap the already-fixed-width segments in color.
-    {
-        std::string bar = border + settings_.box_vertical + R;
-        std::string plain0 = " 1: CREATE / EDIT ";
-        std::string plain1 = " 2: SAVED PLAYLISTS ";
-        std::string gap = "   ";
-        int inner = W - 4;
-        std::string plain_row = plain0 + gap + plain1;
-        std::string seg0 = (playlist_tab_ == 0) ? (HI + plain0 + R) : plain0;
-        std::string seg1 = (playlist_tab_ == 1) ? (HI + plain1 + R) : plain1;
-        std::string colored_row = seg0 + gap + seg1;
-        int pad_n = std::max(0, inner - display_width(plain_row));
-        frame << bar << " " << colored_row << std::string(pad_n, ' ') << " " << bar << "\n";
-    }
-
-    int fixed_rows = 3; // top border + tab strip + bottom border
-    if (playlist_tab_ == 0) {
-        // Same hand-built row as the meta editor Search line.
-        const std::string prefix = "Name: ";
+    int fixed_rows = 3; // the two strip lines + bottom border
+    {   // title on the border line + the settings-style tab strip (no numbers); the pane below stays separate.
+        // On the CREATE / EDIT tab the name field sits on the strip's second line, left of the tab indicators
+        // (which are pushed to the right so the 25 characters of a name always fit).
+        const int name_max = 25;
+        const std::string prefix = " Name: ";
         const std::string dirty_mark = playlist_edit_dirty_ ? " *" : "";
         const int mark_w = static_cast<int>(dirty_mark.size());
-        std::string field;
-        int field_cols = 0;
-        if (playlist_edit_focus_ == 0) {
-            EditPaint p = paint_edit_field(playlist_edit_name_, edit_caret_, edit_anchor_,
-                                           std::max(1, W - 4 - static_cast<int>(prefix.size()) - mark_w), "", true);
-            field = p.s;
-            field_cols = p.cols;
-        } else {
-            field = playlist_edit_name_.empty() ? std::string("(untitled)") : playlist_edit_name_;
-            field_cols = static_cast<int>(display_width(field));
+        const int field_w = name_max + 1;                       // 25 characters + the caret block
+        const int inner_w = static_cast<int>(prefix.size()) + field_w + 2 + 1;   // room for " *" always: the strip never jumps
+        std::string line2;
+        int line2_cols = 0;
+        if (playlist_tab_ == 0) {
+            std::string field;
+            int field_cols = 0;
+            if (playlist_edit_focus_ == 0) {
+                EditPaint p = paint_edit_field(playlist_edit_name_, edit_caret_, edit_anchor_, field_w, "", true);
+                field = p.s;
+                field_cols = p.cols;
+            } else {
+                field = truncate_str(playlist_edit_name_.empty() ? std::string("(untitled)") : playlist_edit_name_, field_w);
+                field_cols = static_cast<int>(display_width(field));
+            }
+            line2 = prefix + field + dirty_mark;
+            line2_cols = static_cast<int>(prefix.size()) + field_cols + mark_w;
         }
-        frame << box_line_field(prefix, field + dirty_mark, field_cols + mark_w, W, border) << "\n";
-        fixed_rows += 1;
+        const auto strip = menu_tab_strip(W, "PLAYLISTS", {"CREATE / EDIT", "SAVED PLAYLISTS"}, playlist_tab_, border, border,
+                                          settings_.box_upper_left, settings_.box_upper_right, settings_.box_vertical,
+                                          inner_w, line2, line2_cols,
+                                          ansi_for(settings_.tab_current_color, false), ansi_for(settings_.tab_other_color, false));
+        frame << strip.first << "\n" << strip.second << "\n";
     }
     frame << box_bottom(W, "", border_bottom) << "\n";
 
@@ -6112,6 +6465,17 @@ void App::meta_refresh_hover_values() {
     for (int i = 0; i < kMetaFieldCount; ++i) meta_hover_values_[i] = meta_display_value(path, i, e);
 }
 
+// SHIFT+R in the main UI and in the meta data editor.
+void App::rescan_now() {
+    const size_t before = all_local_tracks_.size();
+    rescan_library();
+    if (mode_ == Mode::MetaEdit) meta_refresh_lib_view();
+    const long d = static_cast<long>(all_local_tracks_.size()) - static_cast<long>(before);
+    std::string msg = "library rescanned: " + std::to_string(all_local_tracks_.size()) + " tracks";
+    if (d > 0) msg += " (+" + std::to_string(d) + ")"; else if (d < 0) msg += " (" + std::to_string(d) + ")";
+    if (mode_ == Mode::MetaEdit) meta_status_ = msg; else status_line_ = msg;
+}
+
 void App::meta_add_hovering_to_fetch() {
     meta_ensure_session_loaded();
     std::string path = meta_hovering_path();
@@ -6449,6 +6813,9 @@ void App::handle_meta_key(int key) {
         else meta_prompt_single_fetch(path);
         return;
     }
+
+    // SHIFT+R: rescan the library (same rule as SHIFT+B: not while a text field has the caret).
+    if (key == 'R' && !last_key_was_arrow() && (meta_tab_ == 1 || meta_focus_ == 1)) { rescan_now(); return; }
 
     // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
     // tells a real arrow from a typed capital. Unlike the playlist editor
@@ -6866,43 +7233,34 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
     std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
     const std::string HI = "\x1b[7m", R = "\x1b[0m";
 
-    frame << box_top("META EDITOR", W, border) << "\n";
-
-    // Tab strip, hand-built like the playlist editor's (box_line() can't
-    // measure the reverse-video highlight before padding it).
-    {
-        std::string bar = border + settings_.box_vertical + R;
-        std::string plain0 = " 1: EDIT ";
-        std::string plain1 = " 2: FETCH LIST ";
-        std::string gap = "   ";
-        int inner = W - 4;
-        std::string plain_row = plain0 + gap + plain1;
-        std::string seg0 = (meta_tab_ == 0) ? (HI + plain0 + R) : plain0;
-        std::string seg1 = (meta_tab_ == 1) ? (HI + plain1 + R) : plain1;
-        int pad_n = std::max(0, inner - display_width(plain_row));
-        frame << bar << " " << seg0 + gap + seg1 << std::string(pad_n, ' ') << " " << bar << "\n";
-    }
-
-    int fixed_rows = 3; // top border + tab strip + bottom border
-    if (meta_tab_ == 0) {
-        // Painted by hand: a marked range carries reverse-video escapes,
-        // and box_line() pads with display_width(), which counts escape
-        // bytes as columns. box_line_field() pads against what the field
-        // is really worth instead.
-        const std::string prefix = "Search: ";
-        std::string field;
-        int field_cols = 0;
-        if (meta_focus_ == 0) { // focus is in the box: caret + block cursor
-            EditPaint p = paint_edit_field(meta_query_, edit_caret_, edit_anchor_,
-                                           std::max(1, W - 4 - static_cast<int>(prefix.size())), "", true);
-            field = p.s;
-            field_cols = p.cols;
-        } else { // focus elsewhere: plain text, with the placeholder hint
-            field = meta_query_.empty() ? std::string("(type to filter)") : meta_query_;
-            field_cols = static_cast<int>(display_width(field));
+    int fixed_rows = 3; // the two strip lines + bottom border
+    {   // title on the border line + the settings-style tab strip (same as the playlist menu). On the EDIT tab the search
+        // field sits on the strip's second line, left of the tab indicators (pushed right so 25 characters always fit).
+        const int search_max = 25;
+        const std::string prefix = " Search: ";
+        const int field_w = search_max + 1;                                    // 25 characters + the caret block
+        const int inner_w = static_cast<int>(prefix.size()) + field_w + 1;
+        std::string line2;
+        int line2_cols = 0;
+        if (meta_tab_ == 0) {
+            std::string field;
+            int field_cols = 0;
+            if (meta_focus_ == 0) { // focus is in the box: caret + block cursor
+                EditPaint p = paint_edit_field(meta_query_, edit_caret_, edit_anchor_, field_w, "", true);
+                field = p.s;
+                field_cols = p.cols;
+            } else { // focus elsewhere: plain text, with the placeholder hint
+                field = truncate_str(meta_query_.empty() ? std::string("(type to filter)") : meta_query_, field_w);
+                field_cols = static_cast<int>(display_width(field));
+            }
+            line2 = prefix + field;
+            line2_cols = static_cast<int>(prefix.size()) + field_cols;
         }
-        frame << box_line_field(prefix, field, field_cols, W, border) << "\n";
-        fixed_rows += 1;
+        const auto strip = menu_tab_strip(W, "META EDITOR", {"EDIT", "FETCH LIST"}, meta_tab_, border, border,
+                                          settings_.box_upper_left, settings_.box_upper_right, settings_.box_vertical,
+                                          inner_w, line2, line2_cols,
+                                          ansi_for(settings_.tab_current_color, false), ansi_for(settings_.tab_other_color, false));
+        frame << strip.first << "\n" << strip.second << "\n";
     }
     frame << box_bottom(W, "", border_bottom) << "\n";
 
@@ -6963,9 +7321,9 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
         }
     } else {
         std::string hint = (meta_tab_ == 0)
-            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [a] Fetch list | "
-              "[SHIFT+B] Fetch | [r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit"
-            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | "
+            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | [SHIFT+B] Fetch | [SHIFT+R] Rescan | "
+              "[r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit"
+            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+B] Fetch this | [DEL] Remove | [SHIFT+R] Rescan | "
               "[CTRL+SHIFT+S] Save | [CTRL+SHIFT+X] Discard | [ESC] Exit";
         // The legend is wider than the screen (tab 0: ~210 columns once the
         // selection/clipboard commands are in it, tab 1: 116), and
@@ -7210,25 +7568,16 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
     std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
     const std::string HI = "\x1b[7m", R = "\x1b[0m";
 
-    frame << box_top("LISTENING HISTORY", W, border) << "\n";
-
-    // Tab strip, hand-built like the two overlays above (box_line() can't
-    // measure the reverse-video highlight before padding it).
-    {
-        std::string bar = border + settings_.box_vertical + R;
-        std::string p0 = " 1: HISTORY ", p1 = " 2: TOP TRACKS ", p2 = " 3: HABITS ";
-        std::string gap = "   ";
-        int inner = W - 4;
-        std::string plain_row = p0 + gap + p1 + gap + p2;
-        std::string seg0 = (history_tab_ == 0) ? (HI + p0 + R) : p0;
-        std::string seg1 = (history_tab_ == 1) ? (HI + p1 + R) : p1;
-        std::string seg2 = (history_tab_ == 2) ? (HI + p2 + R) : p2;
-        int pad_n = std::max(0, inner - display_width(plain_row));
-        frame << bar << " " << seg0 + gap + seg1 + gap + seg2 << std::string(pad_n, ' ') << " " << bar << "\n";
+    {   // one fused pane: LISTENING HISTORY rests on the top border line, the settings-style tab strip below it (no numbers)
+        const auto strip = menu_tab_strip(W, "LISTENING HISTORY", {"HISTORY", "TOP TRACKS", "HABITS"}, history_tab_, border, border,
+                                          settings_.box_upper_left, settings_.box_upper_right, settings_.box_vertical, 0, "", 0,
+                                          ansi_for(settings_.tab_current_color, false), ansi_for(settings_.tab_other_color, false));
+        frame << strip.first << "\n" << strip.second << "\n";
     }
 
-    int fixed_rows = 3; // top border + tab strip + bottom border
-    frame << box_bottom(W, "", border_bottom) << "\n";
+    // Chrome around the rows: the two strip lines + the bottom border = 3 (the panel adds its bottom border itself,
+    // so only 1 is counted here besides the "- 2" below).
+    int fixed_rows = 1;
 
     // Footer first, because the panel takes exactly the rows it leaves: the
     // legend (as many rows as it needs at this width -- one on a 120-column
@@ -7284,18 +7633,18 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
     const std::string R = "\x1b[0m";
     std::vector<std::string> out;
 
-    static const char* kTabTitle[3] = {"HISTORY", "TOP TRACKS", "HABITS"};
-    std::string title = kTabTitle[history_tab_];
-    if (history_tab_ == 1)
-        title += history_most_first_ ? "  --  most played first" : "  --  least played first";
-    out.push_back(box_top(title, total_width, border_ansi));
+    // The info that sits on the bottom border line.
+    std::string info;
+    if (history_tab_ == 0) info = std::to_string(history_.plays().size()) + " plays (newest 100 shown)";
+    else if (history_tab_ == 1) info = history_most_first_ ? "most played first" : "least played first";
 
     // Column helpers. Both are only ever fed PLAIN text: display_width()
     // counts escape bytes as columns, so a decorated string must be padded
     // first and coloured after (same rule every other panel here follows).
-    auto L = [](const std::string& s, int n) { // right-align an ASCII value
-        if (static_cast<int>(s.size()) >= n) return s.substr(0, static_cast<size_t>(n));
-        return std::string(static_cast<size_t>(n - s.size()), ' ') + s;
+    auto L = [](const std::string& s, int n) { // right-align a value (by display width: the PLAYS arrow is 3 bytes, 1 column)
+        const int w = display_width(s);
+        if (w >= n) return truncate_str(s, n);
+        return std::string(static_cast<size_t>(n - w), ' ') + s;
     };
     auto T = [&](const std::string& s, int n) { // left-align, truncated at display width
         std::string t = truncate_str(s, n);
@@ -7341,9 +7690,10 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
             cursor = history_selected_ + 1; // +1 for the column header above the rows
         }
     } else if (history_tab_ == 1) {
-        const int len_w = 7, plays_w = 5;
+        const int len_w = 7, plays_w = 7;
         const int title_w = std::max(8, inner - len_w - 2 - plays_w);
-        lines.push_back({T("TITLE", title_w) + L("LEN", len_w) + "  " + L("PLAYS", plays_w), 1});
+        lines.push_back({T("TITLE", title_w) + L("LEN", len_w) + "  " + std::string(static_cast<size_t>(std::max(0, plays_w - 7)), ' ') + "PLAYS " + (history_most_first_ ? "\u25bc" : "\u25b2"), 1});
+        { std::string rule; for (int i = 0; i < inner; ++i) rule += "\u2500"; lines.push_back({rule, 3}); }
         if (history_top_view_.empty()) {
             lines.push_back({"nothing played yet -- plays show up here as soon as music runs", 0});
         } else {
@@ -7353,7 +7703,7 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
                 lines.push_back({T(t, title_w) + L(format_mmss(r.len_sec), len_w) + "  " +
                                  L(std::to_string(r.plays), plays_w), 0});
             }
-            cursor = history_selected_ + 1; // +1 for the column header above the rows
+            cursor = history_selected_ + 2; // +2 for the column header and the rule above the rows
         }
     } else {
         // --- Habits: three categories, each under a highlighted header ---
@@ -7361,7 +7711,7 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
         const int lbl_w = std::max(20, inner - 20);
         auto num1 = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.1f", v); return std::string(b); };
         auto pct = [](double v) { char b[32]; std::snprintf(b, sizeof b, "%.0f", v * 100.0); return std::string(b); };
-        auto cat = [&](const char* name) { lines.push_back({std::string(), 0}); lines.push_back({std::string(name), 1}); };
+        auto cat = [&](const char* name) { if (!lines.empty()) lines.push_back({std::string(), 0}); lines.push_back({std::string(name), 1}); };
         auto item = [&](const std::string& label, const std::string& value) {
             lines.push_back({T(label, lbl_w) + value, 0});
         };
@@ -7380,6 +7730,35 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
         item("Skipped", std::to_string(s.skipped));
         item("Replays", std::to_string(s.replays));
         item("Completion rate", pct(s.completion) + "%");
+        cat("LISTENING BY HOUR OF THE DAY");
+        {
+            static const char* lv[9] = {" ", "\u2581", "\u2582", "\u2583", "\u2584", "\u2585", "\u2586", "\u2587", "\u2588"};
+            double mx = 0;
+            for (double v : s.hours) mx = std::max(mx, v);
+            std::string bars = "  ", labs = "  ";
+            for (int h = 0; h < 24; ++h) {
+                const int l = mx > 0 ? static_cast<int>(std::ceil(s.hours[static_cast<size_t>(h)] / mx * 8.0 - 1e-9)) : 0;
+                const std::string g = lv[std::clamp(l, 0, 8)];
+                bars += " " + g + g + " ";
+                char b[8]; std::snprintf(b, sizeof b, " %02d ", h);
+                labs += b;
+            }
+            lines.push_back({bars, 0});
+            lines.push_back({labs, 0});
+        }
+        cat("LISTENING BY WEEKDAY");
+        {
+            static const char* wd[7] = {"Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"};
+            double mx = 0;
+            for (double v : s.weekdays) mx = std::max(mx, v);
+            for (int d = 0; d < 7; ++d) {
+                const double v = s.weekdays[static_cast<size_t>(d)];
+                const int len = mx > 0 ? static_cast<int>(std::lround(v / mx * 40.0)) : 0;
+                std::string bar40;
+                for (int i = 0; i < len; ++i) bar40 += "\u2588";
+                lines.push_back({"  " + T(wd[d], 11) + bar40 + std::string(static_cast<size_t>(40 - len), ' ') + "  " + format_len(v), 0});
+            }
+        }
         cursor = -1; // no cursor: this tab scrolls
     }
 
@@ -7399,14 +7778,15 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
     for (int k = start; k < static_cast<int>(lines.size()) && shown < body; ++k, ++shown) {
         const std::string& text = lines[static_cast<size_t>(k)].first;
         const int style = lines[static_cast<size_t>(k)].second;
-        if (style == 1) head(text);
+        if (style == 3) out.push_back(bar + " " + legend_sgr(settings_) + text + R + " " + bar);
+        else if (style == 1) head(text);
         else if (style == 2 || (k == cursor && !(history_tab_ == 1 && history_pane_ == 1)))
             row(text, cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color));
         else row(text, "");
     }
     while (shown < body) { blank(); ++shown; }
 
-    out.push_back(box_bottom(total_width, "", border_ansi_bottom));
+    out.push_back(box_bottom(total_width, info, border_ansi_bottom));
     return out;
 }
 
@@ -7487,6 +7867,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     auto edit_field_width = [&]() -> int {
         if (settings_tab_ == 0) return 7;
         if (settings_tab_ == 3 && path_row_is_text(settings_row_)) {
+            const PathRow er = path_row(settings_row_);
             const int edge = std::max(10, W - 36);
             const int want = display_width(color_edit_buffer_) + 1;
             return std::min(edge, std::max(20, want));
@@ -7543,7 +7924,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         std::string lab = (i == settings_tab_) ? ("[" + std::string(kTabNames[i]) + "]") : kTabNames[i];
         int lab_len = static_cast<int>(lab.size());
         bool is_last = (idx == top_tabs.size() - 1);
-        add("  " + lab + "  \u250c", repeat("\u2500", 4 + lab_len) + "\u2518", 5 + lab_len);
+        add("  " + R + ansi_for(i == settings_tab_ ? settings_.tab_current_color : settings_.tab_other_color, false) + lab + R + B(1) + "  \u250c",
+            repeat("\u2500", 4 + lab_len) + "\u2518", 5 + lab_len);
         if (is_last) add("\u2500", " ", 1);
         else add("\u2500\u2500\u2510", "  \u2514", 3);
     }
@@ -7555,21 +7937,21 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // 2. Content.
     int y = 3;
     if (settings_tab_ == 0) {
-        static const char* grp[16]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
-                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", "", "HEADER", "LEGEND"};
-        static const char* l1n[16]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
+        static const char* grp[17]  = {"BORDER_COLOR", "DISK", "METADATA", "VIZ", "PROGRESS_BAR",
+                                        "LIST", "", "", "QUEUE", "", "", "LYRICS", "", "", "HEADER", "LEGEND", "TAB_NAMES"};
+        static const char* l1n[17]  = {"TOP", "TOP", "KEY", "LEFT", "PLAYED",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
                                         "INACTIVE  FG", "PLAYING   FG", "CURSOR    FG",
                                         "INACTIVE  FG", "ACTIVE L  FG", "ACTIVE W  FG",
-                                        "TEXT", "TEXT"};
-        static const char* l2n[16]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
+                                        "TEXT", "TEXT", "CURRENT"};
+        static const char* l2n[17]  = {"BOTTOM", "BOTTOM", "VAL", "RIGHT", "PENDING",
                                         "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG", "BG",
-                                        "", ""}; // HEADER and LEGEND are foreground-only fields: no background cell at all
-        for (int i = 0; i < 16; ++i) {
+                                        "", "", "OTHER"}; // HEADER and LEGEND are foreground-only fields: no background cell at all
+        for (int i = 0; i < 17; ++i) {
             if (i == 5) { pos(y, 1, B(y) + "\u251c" + repeat("\u2500", W - 2) + "\u2524" + R); y++; }
             pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
 
-            pos(y, 3, pad(grp[i], 15)); pos(y, 18, ":");
+            pos(y, 3, header_sgr(settings_) + pad(grp[i], 15) + R); pos(y, 18, ":");
 
             pos(y, 20, pad(l1n[i], 14, false)); pos(y, 35, ":");
             {
@@ -7583,12 +7965,18 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             // cell at all, so it renders neither a label nor a ":" here --
             // without this guard there'd be a dangling colon at col 56 with
             // nothing between it and the preview.
+            // Colour swatches right behind the values (the radio settings do the same):
+            // foreground cells show "██" in the colour, background cells a block of it.
+            pos(y, 46, ansi_for(settings_get_value(i, 0), false) + "\u2588\u2588" + R);
             if (l2n[i][0]) {
-                pos(y, 48, pad(l2n[i], 7, false)); pos(y, 56, ":");
+                pos(y, 50, pad(l2n[i], 7, false)); pos(y, 58, ":");
                 bool sel = (i == settings_row_ && settings_col_ == 1 && mode_ != Mode::ColorEdit);
                 bool ed = (i == settings_row_ && settings_col_ == 1 && mode_ == Mode::ColorEdit);
                 std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 1), 7);
-                pos(y, 59, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                pos(y, 61, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                const bool is_bg = std::string(l2n[i]) == "BG";
+                pos(y, 69, is_bg ? bg_ansi_for(settings_get_value(i, 1)) + "  " + R
+                                 : ansi_for(settings_get_value(i, 1), false) + "\u2588\u2588" + R);
             }
 
             std::string valA = settings_get_value(i, 0), valB = settings_get_value(i, 1);
@@ -7613,6 +8001,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 // Same prefix legend_sgr() gives the real hint lines, so the
                 // swatch shows the exact result (an unset color is plain text).
                 rt = ansi_for(valA, false) + "[ESC] close | [ENTER] OK" + R;
+            } else if (i == 16) {
+                rt = ansi_for(valA, false) + "[COLORS]" + R + "  " + ansi_for(valB, false) + "ON/OFF  ANIMATION" + R;
             }
             if (!rt.empty()) pos(y, 72, rt);
             y++;
@@ -7633,7 +8023,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
             pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
             if (sel && !settings_options_for(settings_tab_, i).empty())
-                pos(y, 57, legend_sgr(settings_) + "< \u2194 >\x1b[0m");
+                pos(y, 57, ansi_for(settings_.tab_current_color, false) + "< \u2194 >\x1b[0m");
             y++;
         }
     } else if (settings_tab_ == 2) {
@@ -7648,7 +8038,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(i, 0), 20);
             pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
 
-            if (sel && !settings_options_for(settings_tab_, i).empty()) pos(y, 57, legend_sgr(settings_) + "< \u2194 >\x1b[0m");
+            if (sel && !settings_options_for(settings_tab_, i).empty()) pos(y, 57, ansi_for(settings_.tab_current_color, false) + "< \u2194 >\x1b[0m");
             y++;
         }
     } else if (settings_tab_ == 3) {
@@ -7659,14 +8049,14 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         // so a long list never grows the panel past player_h; see
         // path_display_row() for how a selectable row maps to the line it
         // is drawn on.
-        int display_count = path_display_row(path_row_count() - 1) + 1;
+        int display_count = path_display_total();
         int visible = std::max(1, MAX_Y - 3);
         int cur_display = path_display_row(settings_row_);
         int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
 
         int disp = 0;
         auto in_view = [&]() { return disp >= scroll && y < MAX_Y; };
-        auto draw_header = [&](const char* text) {
+        auto draw_header = [&](const char* text, const char* note = "") {
             // empty spacer row (just the side borders)
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
@@ -7679,24 +8069,32 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
                 pos(y, 6, header_sgr(settings_) + text + R);
+                if (*note) pos(y, 6 + static_cast<int>(std::strlen(text)) + 3, legend_sgr(settings_) + note + R);
                 y++;
             }
             disp++;
         };
         auto draw_path_row = [&](const PathRow& r) {
+            if (r.kind == PathRow::Kind::Path && (r.label && *r.label)) {   // blank spacer above DOWNLOAD / PLAYLIST / HISTORY PATH
+                if (in_view()) { pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R); y++; }
+                disp++;
+            }
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
                 const bool sel = (r.sel == settings_row_ && mode_ != Mode::ColorEdit);
                 const bool ed = (r.sel == settings_row_ && mode_ == Mode::ColorEdit);
                 if (r.kind == PathRow::Kind::Path) {
-                    std::string lab = r.download_folder ? "Download Path"
-                                      : std::string(r.playlist_path ? "Playlist Path " : "Local Path ")
-                                        + std::to_string(r.path_index + 1);
-                    pos(y, 6, pad(lab, 25)); pos(y, 32, ":");
+                    // DOWNLOAD / PLAYLIST / HISTORY PATH are single paths: the section header says what they are, so the value
+                    // sits right under it (no second "Download Path :" label). Local paths are numbered.
+                    const bool single = (r.label && *r.label);   // DOWNLOAD / PLAYLIST / HISTORY PATH: the header name is the row label
+                    const int vx = 35;
+                    if (single) pos(y, 6, header_sgr(settings_) + pad(r.label, 25) + R);
+                    else pos(y, 6, pad("Local Path " + std::to_string(r.path_index + 1), 25));
+                    pos(y, 32, ":");
                     // The value column runs from col 35 right up to the border --
                     // a folder path is far longer than a hotkey's 20 columns, and
                     // nothing may spill over the panel edge.
-                    int val_w = std::max(10, W - 36);
+                    int val_w = std::max(10, W - (vx + 1));
                     std::string v;
                     if (ed) {
                         // While editing the field is only as wide as what has
@@ -7720,7 +8118,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                                 : std::clamp(static_cast<int>(display_width(truncate_str(raw, val_w))), 1, val_w);
                         v = pad(truncate_str(raw, w), w);
                     }
-                    pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
+                    pos(y, vx, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                 } else { // AddPath
                     pos(y, 6, pad(r.label, 25)); pos(y, 32, ":");
                     pos(y, 35, (sel ? HI : "") + std::string(20, ' ') + R);
@@ -7732,7 +8130,18 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         };
         for (const PathRow& r : build_path_rows()) {
             if (y >= MAX_Y) break;
-            if (r.kind == PathRow::Kind::Header) draw_header(r.label);
+            if (r.kind == PathRow::Kind::Header) {
+                const std::string lab = r.label;
+                draw_header(r.label); (void)lab;
+            }
+            else if (r.kind == PathRow::Kind::Note) {
+                if (in_view()) {
+                    pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                    pos(y, 6, legend_sgr(settings_) + truncate_str(r.label, W - 8) + R);
+                    y++;
+                }
+                disp++;
+            }
             else draw_path_row(r);
         }
     } else if (settings_tab_ == 4) {
@@ -7782,7 +8191,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 pos(y, 6, pad(row.label, 25)); pos(y, 32, ":");
                 bool sel = (selectable_row == settings_row_ && mode_ != Mode::ColorEdit);
                 bool ed = (selectable_row == settings_row_ && mode_ == Mode::ColorEdit);
-                std::string v = ed ? edit_paint(edit_field_width()).s : pad(settings_get_value(selectable_row, 0), 20);
+                std::string v = ed ? edit_paint(edit_field_width()).s : pad(pretty_key(settings_get_value(selectable_row, 0)), 20);
                 pos(y, 35, (sel ? HI : "") + (ed ? "\x1b[41;37m" : "") + v + R);
                 y++;
             }
@@ -7804,6 +8213,16 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
             }
             disp++;
         };
+        auto draw_reset_row = [&]() {
+            if (in_view()) {
+                pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
+                pos(y, 6, pad("Reset All Keys To Default", 25)); pos(y, 32, ":");
+                const bool sel = settings_row_ == 0 && mode_ != Mode::ColorEdit;
+                pos(y, 35, (sel ? HI : "") + pad("[ENTER] reset", 20) + R);
+                y++;
+            }
+            disp++;
+        };
         auto draw_font_row = [&](char c, int selectable_row) {
             if (in_view()) {
                 pos(y, 1, B(y) + "\u2502" + R); pos(y, W, B(y) + "\u2502" + R);
@@ -7817,6 +8236,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         };
 
         if (y < MAX_Y) draw_note(kRefNote);
+        if (y < MAX_Y) draw_reset_row();
         for (int i = 0; i < kRefRowCount && y < MAX_Y; ++i) {
             if (kRefRows[i].header) draw_header(kRefRows[i].header);
             if (y < MAX_Y) draw_hotkey_row(kRefStart + i);
@@ -7864,7 +8284,9 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     }
     y++;
 
-    pos(y, 1, legend_sgr(settings_) + "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [S] Save | [Q] Quit\x1b[0m");
+    pos(y, 1, legend_sgr(settings_) + (settings_tab_ == 4
+        ? "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change key | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save & close | [ESC/q] Discard & close"
+        : "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [s] Save & close | [ESC/q] Discard & close") + "\x1b[0m");
     y++;
     // The log/status line lives here now -- render_frame() deliberately no
     // longer prints it under the Browse list (an untruncated message there
@@ -7873,7 +8295,8 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // and shift the whole UI left by a column). This row sits on the panel's
     // own last screen line, so it is truncated to the panel width: a long
     // path or error message just ends early instead of wrapping.
-    if (!status_line_.empty()) pos(y, 1, "\x1b[32m" + truncate_str(status_line_, W - 2) + "\x1b[0m");
+    if (settings_dirty_) pos(y, 1, "\x1b[32m* unsaved changes (saved with S or when you leave)\x1b[0m");
+    else if (!status_line_.empty()) pos(y, 1, "\x1b[32m" + truncate_str(status_line_, W - 2) + "\x1b[0m");
 
     // 4. In-place text editing cursor placement.
     if (mode_ == Mode::ColorEdit) {
@@ -7887,11 +8310,12 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
         const int caret_col = paint_edit_field(color_edit_buffer_, ec, ea, edit_field_width(), "", false).caret;
         if (settings_tab_ == 0) {
             int cy = 3 + settings_row_ + (settings_row_ >= 5 ? 1 : 0);
-            int cx = ((settings_col_ == 0) ? 38 : 59) + caret_col;
+            int cx = ((settings_col_ == 0) ? 38 : 61) + caret_col;
             frame << "\x1b[" << cy << ";" << cx << "H\x1b[?25h";
         } else {
             int cy = 3 + settings_row_;
             int cx = 35 + caret_col;
+            if (settings_tab_ == 3) { const PathRow cr = path_row(settings_row_); (void)cr; }
             if (settings_tab_ == 1) {
                 // The ON/OFF tab scrolls only on a very short terminal:
                 // recompute the exact scroll the renderer used.
@@ -7907,7 +8331,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
                 // AddPath row opens a new empty path row before editing.
                 int visible = std::max(1, MAX_Y - 3);
                 int cur_display = path_display_row(settings_row_);
-                int display_count = path_display_row(path_row_count() - 1) + 1;
+                int display_count = path_display_total();
                 int scroll = std::clamp(cur_display - visible / 2, 0, std::max(0, display_count - visible));
                 cy = 3 + (cur_display - scroll);
             } else if (settings_tab_ == 4) {
@@ -7988,7 +8412,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         // --- System -- listed first. Besides the rebindable system hotkeys
         // this also carries the literal keys used across multiple overlays
         // (not tied to one editor's own legend below). ---
-        {"SYSTEM (MAIN UI)", "HKeySetting", "Open Settings panel, hit again to save and quit"},
+        {"SYSTEM (MAIN UI)", "#@SWITCHKEY", "Switch to the RADIO mode (types the * character; playback is paused and the player waits in the background)"},
+        {nullptr, "HKeySetting", "Open Settings panel, hit again to save and quit"},
         {nullptr, "HKeyConsole", "Console / logs"},
         {nullptr, "HKeyCheatsheet", "This cheatsheet"},
         {nullptr, "HKeyQuit", "Quit"},
@@ -8031,8 +8456,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#UP/DOWN  LEFT/RIGHT", "Normalization overlay: pick a value / change it   [SPACE] on/off   [R] reset   [ESC] close"},
         {nullptr, "#" MUISC_LYRICS_KEY_UC, "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
         {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
-        {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min or stop after this song (toggle)"},
-        {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it   [ESC] close (the Stop play mode is left alone)"},
+        {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min (optional fade-out over the last 10 %) or stop after this song (toggle)"},
+        {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it ('Fade out' toggles the fade)   [ESC] close (the Stop play mode is left alone)"},
         // --- Search ---
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
@@ -8076,9 +8501,15 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
         {nullptr, "#x / SHIFT+T / SHIFT+A / SHIFT+Y", "Filter library: missing any / title / artist / year"},
         {nullptr, "#SHIFT+B", "Fetch metadata for the hovered title (AcoustID)"},
+        {nullptr, "#SHIFT+R", "Rescan the library (new files); also in the meta data editor (library pane / fetch list focused)"},
         {nullptr, "#DEL / d", "Remove hovering track from the fetch list"},
         {nullptr, "#CTRL+SHIFT+S", "Apply the meta editor's pending edits to the files"},
         {nullptr, "#CTRL+SHIFT+X", "Discard the meta editor's pending edits"},
+        // --- Settings (REFERENCE tab) ---
+        {"SETTINGS (REFERENCE TAB)", "#ENTER", "Change the key of the selected command (type the new key, ENTER applies)"},
+        {nullptr, "#DEL", "Restore the default key of the selected command"},
+        {nullptr, "#ENTER on the first line", "Reset all keys to their defaults"},
+        {nullptr, "#CTRL+SHIFT+U", "Undo the last key change or reset (up to 5, newest first)"},
         // --- Listening history ---
         {"HISTORY", "HKeyHistory", "Listening history: last plays, top tracks, habits"},
         {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
@@ -8104,61 +8535,48 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     // on every terminal size (120x30 included) -- there is no status/prompt
     // row here that would need them.
     int visible = std::max(1, term_rows_ - 3);
-    // Counted in DISPLAY lines rather than rows: a category costs three
-    // (blank spacer + title + the row the title sits on) exactly like
-    // ref_display_row() counts them on the Reference tab, and
-    // cheatsheet_scroll_ is kept in the same unit -- so a header scrolls
-    // like any other line.
-    int total = 0;
-    for (const auto& r : rows) total += r.header ? 3 : 1;
-    // Scrollable, same as Settings' Reference tab: this table is longer than
-    // what a 32-row terminal can show at once (it already was, before the
-    // meta editor's rows were added to it), and silently dropping the tail
-    // would make entries unreachable rather than just off-screen.
-    int max_scroll = std::max(0, total - visible);
-    cheatsheet_scroll_ = std::clamp(cheatsheet_scroll_, 0, max_scroll);
 
-    // A coloured line can't go through box_line(): that pads by counting
-    // bytes, so it would treat the escape codes as columns and truncate the
-    // text away. Pad the plain text first, then wrap the padded result.
-    const std::string R = "\x1b[0m";
-    const std::string bar = border + settings_.box_vertical + R;
+    // Every entry becomes display lines first (a category costs a blank spacer + its title, a long description wraps),
+    // so the scroll range counts what is really drawn. The description column starts after the widest key + 2 spaces.
     const int inner = std::max(0, W - 4);
-    int disp = 0;  // running index over the whole table's display lines
-    int shown = 0; // how many of them are actually printed (a window of `visible`)
-    auto emit = [&](const std::string& plain, const std::string& sgr) {
-        bool in_window = disp >= cheatsheet_scroll_ && shown < visible;
-        ++disp;
-        if (!in_window) return;
-        ++shown;
-        frame << bar << " ";
-        if (!sgr.empty()) frame << sgr;
-        frame << pad_right(plain, inner);
-        if (!sgr.empty()) frame << R;
-        frame << " " << bar << "\n";
+    auto key_of = [&](const CheatRow& r) {
+        if (r.action[0] == '#') return pretty_key(std::string(r.action + 1));
+        auto it = settings_.hotkeys.find(r.action);
+        return pretty_key((it != settings_.hotkeys.end() && !it->second.empty()) ? it->second : std::string("-"));
     };
+    int key_w = 0;
+    for (const auto& r : rows) key_w = std::max(key_w, display_width(key_of(r)));
+    key_w = std::min(key_w, std::max(10, inner / 2));
+    const int desc_col = key_w + 2;
+    const int desc_w = std::max(10, inner - desc_col);
+    struct DLine { std::string plain, sgr; };
+    std::vector<DLine> dlines;
     for (const auto& r : rows) {
         if (r.header) {
-            emit(std::string(), "");                       // blank spacer row...
-            emit(r.header, header_sgr(settings_));         // ...then the title, Header colour + bold
-            // ...and then the row itself, which is where the header lives
-            // (same as kRefRows: a category's title sits on its FIRST entry,
-            // not on a line of its own) -- falling through, not continue.
+            dlines.push_back({std::string(), ""});                       // blank spacer row...
+            dlines.push_back({r.header, header_sgr(settings_)});         // ...then the title, Header colour + bold
         }
-        std::string key;
-        if (r.action[0] == '#') {
-            key = r.action + 1;                            // literal key label, no hotkey to look up
-        } else {
-            auto it = settings_.hotkeys.find(r.action);
-            key = (it != settings_.hotkeys.end() && !it->second.empty()) ? it->second : "-";
-        }
-        // 20 columns, wide enough for the widest literal key ("D / DEL /
-        // BACKSPACE" is 19): pad_right() truncates instead of leaving a gap,
-        // which used to glue "ARROW_KEY_RIGH" / "D / DEL / BACKSP" straight
-        // onto their descriptions. A user binding even wider than that keeps
-        // its full text with two spaces behind it rather than being cut.
-        std::string key_col = (display_width(key) > 19) ? key + "  " : pad_right(key, 20);
-        emit(key_col + r.desc, "");
+        const std::string key = key_of(r);
+        const auto parts = wrap_words(r.desc, desc_w);
+        for (size_t i = 0; i < parts.size(); ++i)
+            dlines.push_back({(i == 0 ? pad_right(truncate_str(key, key_w), desc_col) : std::string(static_cast<size_t>(desc_col), ' ')) + parts[i], ""});
+    }
+    const int total = static_cast<int>(dlines.size());
+    const int max_scroll = std::max(0, total - visible);
+    cheatsheet_scroll_ = std::clamp(cheatsheet_scroll_, 0, max_scroll);
+
+    // A coloured line can't go through box_line(): that pads by counting bytes, so it would treat the escape codes
+    // as columns. Pad the plain text first, then wrap the padded result.
+    const std::string R = "\x1b[0m";
+    const std::string bar = border + settings_.box_vertical + R;
+    int shown = 0;
+    for (int i = cheatsheet_scroll_; i < total && shown < visible; ++i, ++shown) {
+        const DLine& d = dlines[static_cast<size_t>(i)];
+        frame << bar << " ";
+        if (!d.sgr.empty()) frame << d.sgr;
+        frame << pad_right(d.plain, inner);
+        if (!d.sgr.empty()) frame << R;
+        frame << " " << bar << "\n";
     }
     while (shown < visible) { frame << box_line("", W, border) << "\n"; ++shown; }
 
@@ -8479,11 +8897,12 @@ std::vector<std::string> App::build_queue_overlay_panel(int panel_w, int queue_r
 // draw_floating_panel() for why these don't clear the screen.
 // ---------------------------------------------------------------------
 
-void App::draw_floating_panel(std::ostringstream& frame, const std::vector<std::string>& lines, int panel_w, int W) const {
+void App::draw_floating_panel(std::ostringstream& frame, const std::vector<std::string>& lines, int panel_w, int W, int fixed_col) const {
     int panel_h = static_cast<int>(lines.size());
-    int start_col = 1 + std::max(0, (W - panel_w) / 2);
+    int start_col = fixed_col > 0 ? fixed_col : 1 + std::max(0, (W - panel_w) / 2);
     int start_row = 1 + std::max(0, (term_rows_ - panel_h) / 2 - kFloatingPanelUpShift);
     start_row = std::clamp(start_row, 1, std::max(1, term_rows_ - panel_h));
+    float_rect_[0] = start_col - 1; float_rect_[1] = start_row - 1; float_rect_[2] = panel_w; float_rect_[3] = panel_h;   // 0-based, for the scope image
     for (int i = 0; i < panel_h; ++i) {
         frame << "\x1b[" << (start_row + i) << ";" << start_col << "H" << lines[i];
     }
@@ -8975,25 +9394,18 @@ std::vector<std::string> App::build_eq_panel() const {
     return lines;
 }
 
-// Oscilloscope tuning overlay (SHIFT+O). Rows: 0 decay, 1 dot threshold,
-// 2 tail brightness. The ranges match what settings.cpp clamps on load.
-namespace {
-struct OsciKnob { const char* label; float lo, hi, step; };
-constexpr OsciKnob kOsciKnobs[3] = {
-    {"Decay",         0.00f, 0.99f, 0.01f},
-    {"Dot threshold", 0.01f, 1.00f, 0.01f},
-    {"Tail",          0.00f, 1.00f, 0.02f},
-};
-} // namespace
-
+// Oscilloscope tuning overlay (SHIFT+O). The rows come from osci_visible_rows() (osci_settings.cpp): which ones are
+// shown depends on the style (braille / image). The ranges match what settings.cpp clamps on load.
 void App::osci_menu_adjust(int dir) {
-    float* v = osci_menu_row_ == 0 ? &settings_.osci_decay
-             : osci_menu_row_ == 1 ? &settings_.osci_dot_threshold
-                                   : &settings_.osci_tail_brightness;
-    const OsciKnob& k = kOsciKnobs[std::clamp(osci_menu_row_, 0, 2)];
-    // Round to the step grid so repeated presses never accumulate float drift.
-    float next = std::round((*v + dir * k.step) / k.step) * k.step;
-    *v = std::clamp(next, k.lo, k.hi);
+    const std::vector<int> rows = osci_visible_rows(settings_);
+    if (rows.empty()) return;
+    osci_menu_row_ = std::clamp(osci_menu_row_, 0, static_cast<int>(rows.size()) - 1);
+    const int id = rows[osci_menu_row_];
+    osci_adjust(settings_, id, dir);
+    // the style row changes which rows exist: keep the cursor on the same one
+    const std::vector<int> now = osci_visible_rows(settings_);
+    for (size_t i = 0; i < now.size(); ++i) if (now[i] == id) { osci_menu_row_ = static_cast<int>(i); return; }
+    osci_menu_row_ = std::clamp(osci_menu_row_, 0, static_cast<int>(now.size()) - 1);
 }
 
 std::vector<std::string> App::build_osci_menu_panel() const {
@@ -9007,20 +9419,17 @@ std::vector<std::string> App::build_osci_menu_panel() const {
         const std::string body = pad_right(truncate_str(plain, inner), inner);
         return bar + " " + (hi ? HI + body + R : body) + " " + bar;
     };
-
-    const float vals[3] = {settings_.osci_decay, settings_.osci_dot_threshold, settings_.osci_tail_brightness};
+    const std::vector<int> rows = osci_visible_rows(settings_);
     std::vector<std::string> lines;
     lines.push_back(box_top("Oscilloscope", W, border));
-    for (int i = 0; i < 3; ++i) {
-        const OsciKnob& k = kOsciKnobs[i];
-        char num[16];
-        std::snprintf(num, sizeof num, "%.2f", vals[i]);
-        const std::string plain = std::string(i == osci_menu_row_ ? "> " : "  ") +
-                                  pad_right(k.label, 16) + pad_left(num, 5);
-        lines.push_back(row(plain, i == osci_menu_row_));
+    for (size_t i = 0; i < rows.size(); ++i) {
+        const bool sel = static_cast<int>(i) == osci_menu_row_;
+        const std::string plain = std::string(sel ? "> " : "  ") + pad_right(osci_row_label(rows[i]), 22) +
+                                  pad_left(osci_row_value(settings_, rows[i]), inner - 24);
+        lines.push_back(row(plain, sel));
     }
-    lines.push_back(row(settings_.lyric_viz == 1 ? "[UP/DOWN] select   [LEFT/RIGHT] change"
-                                                 : "Lyric Viz is sphere - use osci", false));
+    lines.push_back(row("", false));
+    lines.push_back(row("[UP/DOWN] select  [LEFT/RIGHT] change", false));
     lines.push_back(box_bottom(W, "[R] reset  [SHIFT+O / ESC] close", border_bottom));
     return lines;
 }
@@ -9206,6 +9615,7 @@ std::string fmt_countdown(long long secs) {
 } // namespace
 
 void App::sleep_timer_cancel() {
+    player_.set_fade(1.0f);
     sleep_timer_active_ = false;
     sleep_timer_minutes_ = 0;
     sleep_stop_after_track_ = false;
@@ -9234,6 +9644,9 @@ void App::sleep_timer_apply(int row) {
     }
 }
 
+// Fade length of a minute timer: 10 % of the time, 30 s .. 10 min (the radio's rule).
+static double sleep_fade_seconds(int minutes) { return std::clamp(minutes * 6.0, 30.0, 600.0); }
+
 void App::sleep_timer_tick() {
     // A pending "stop after song" with nothing playing (and nothing about to
     // start) has no song left to wait for -- drop it rather than letting it
@@ -9241,10 +9654,17 @@ void App::sleep_timer_tick() {
     if (sleep_stop_after_track_ && !has_track_ && !advancing_ && !load_in_progress_.load())
         sleep_stop_after_track_ = false;
     if (!sleep_timer_active_) return;
-    if (std::chrono::steady_clock::now() < sleep_timer_deadline_) return;
+    if (std::chrono::steady_clock::now() < sleep_timer_deadline_) {
+        const double left = std::chrono::duration<double>(sleep_timer_deadline_ - std::chrono::steady_clock::now()).count();
+        const double len = sleep_fade_seconds(sleep_timer_minutes_);
+        if (settings_.sleep_fade && left < len) { const double t = left / len; player_.set_fade(static_cast<float>(t * t)); }
+        else player_.set_fade(1.0f);
+        return;
+    }
     if (has_track_ && !advancing_ && device_play_pending_gen_.load() == 0) {
         // Pause, not stop: the position survives and one press of play resumes.
         if (!player_.is_paused()) player_.pause();
+        player_.set_fade(1.0f);   // the next press of play comes back at the normal volume
         sleep_timer_active_ = false;
         sleep_timer_minutes_ = 0;
         status_line_ = "sleep timer: playback paused";
@@ -9298,9 +9718,10 @@ std::vector<std::string> App::build_sleep_timer_panel() const {
                                 running ? fmt_countdown(left_secs) + " left" : ""), i == sleep_menu_row_));
     }
     lines.push_back(row(two(sleep_menu_row_ == 5, "Stop after current song", sleep_stop_after_track_ ? "on" : ""), sleep_menu_row_ == 5));
-    lines.push_back(row(two(sleep_menu_row_ == 6, "Off", (!sleep_timer_active_ && !sleep_stop_after_track_) ? "(no timer)" : ""), sleep_menu_row_ == 6));
-    lines.push_back(row(sleep_timer_active_ ? "Playback is paused when the time is up."
-                                            : "Minute timers pause, they do not stop.", false));
+    lines.push_back(row(two(sleep_menu_row_ == 6, "Fade out", settings_.sleep_fade ? "on" : "off"), sleep_menu_row_ == 6));
+    lines.push_back(row(two(sleep_menu_row_ == 7, "Off", (!sleep_timer_active_ && !sleep_stop_after_track_) ? "(no timer)" : ""), sleep_menu_row_ == 7));
+    lines.push_back(row(settings_.sleep_fade ? "Volume glides down over the last 10 % of" : "Playback is paused when the time is up.", false));
+    lines.push_back(row(settings_.sleep_fade ? "the time (30 s - 10 min), then it pauses." : "Minute timers pause, they do not stop.", false));
     lines.push_back(box_bottom(W, "[UP/DOWN] [ENTER] set  [ESC] close", border_bottom));
     return lines;
 }
@@ -9564,6 +9985,9 @@ static std::string soften_fullscreen_frame(const std::string& frame, int cols) {
 }
 
 std::string App::render_frame(TerminalIO& term) {
+    gfx_ok_ = false;          // set again at the very end of a Browse frame (the Settings / Console / ... screens return early and show no picture)
+    gfx_.active = false;      // build_metadata_panel() switches it on again when the image style is drawn this frame
+    float_rect_[2] = float_rect_[3] = 0;
     int term_cols = term.cols();
     // Was clamped to a minimum of 80 regardless of the real terminal
     // width -- on a narrower phone terminal (the screenshots suggest
@@ -9890,7 +10314,7 @@ std::string App::render_frame(TerminalIO& term) {
     } else if (mode_ == Mode::ClearQueue) {
         draw_floating_panel(floating, build_clear_queue_panel(), kClearQueuePanelWidth, W);
     } else if (mode_ == Mode::OsciMenu) {
-        // Small centred panel, clear of the scope in the top panel's right-hand side.
+        // Centred like the other overlays; a scope image under it is cropped to the columns that stay free.
         draw_floating_panel(floating, build_osci_menu_panel(), kOsciMenuPanelWidth, W);
     } else if (mode_ == Mode::NormMenu) {
         draw_floating_panel(floating, build_norm_menu_panel(), kNormMenuPanelWidth, W);
@@ -9902,6 +10326,22 @@ std::string App::render_frame(TerminalIO& term) {
         draw_floating_panel(floating, build_eq_panel(), kEqPanelWidth, W);
     }
     out += floating.str();
+    if (gfx_.active) {
+        const bool floating_mode = mode_ != Mode::Browse && mode_ != Mode::Search;
+        const bool covered_all = list_overlay_active() || queue_overlay_active();
+        if (covered_all || (mode_family(mode_) != 0)) gfx_.active = false;
+        else {
+            gfx_.crop = 0;
+            const int fx = float_rect_[0], fy = float_rect_[1], fw = float_rect_[2], fh = float_rect_[3];
+            if (floating_mode && fw > 0 && fy < gfx_.row + gfx_.rows && fy + fh > gfx_.row && fx < gfx_.col + gfx_.cols && fx + fw > gfx_.col) {
+                // an overlay covers part of the picture: free the columns up to its right edge (all of it when it sits further right)
+                gfx_.crop = fx <= gfx_.col ? std::clamp(fx + fw - gfx_.col, 0, gfx_.cols) : gfx_.cols;
+            }
+        }
+        if (gfx_.active && gfx_.crop != gfx_last_crop_) gfx_.fresh = true;
+        gfx_last_crop_ = gfx_.active ? gfx_.crop : -1;
+    } else gfx_last_crop_ = -1;
+    gfx_ok_ = gfx_.active;
     return out;
 }
 
@@ -9930,6 +10370,11 @@ std::string App::clamp_output_rows(const std::string& frame, int term_rows) cons
 // ---------------------------------------------------------------------
 
 int App::run() {
+    // Coming back from the radio the App is still alive (it was only suspended): nothing is initialised or restored again.
+    const bool resuming = suspended_;
+    suspended_ = false;
+    bool restored = false;
+    if (!resuming) {
     ConsoleLog::instance().init(settings_.console_verbosity == 1 ? LogVerbosity::Verbose : LogVerbosity::Basic);
     // Flush what the constructor's local-library scan found before logging
     // was ready to record it -- see local_scan_diagnostics_'s declaration
@@ -9957,7 +10402,6 @@ int App::run() {
     // or corrupt snapshot.json is treated identically to "no snapshot at
     // all" (load_snapshot() already guards that), so this always falls
     // back to the normal cold-start behavior on any failure.
-    bool restored = false;
     if (settings_.autosave_enabled) {
         SnapshotData snap;
         if (load_snapshot(snap)) {
@@ -9974,16 +10418,28 @@ int App::run() {
         selected_ = 0;
         start_local_track(local_view_[0]);
     }
+    }   // !resuming
 
     TerminalIO term;
+    if (resuming) { quit_ = false; switch_mode_ = false; force_redraw_ = true; }
     last_frame_time_ = std::chrono::steady_clock::now();
     last_autosave_at_ = std::chrono::steady_clock::now();
     ConsoleLog::instance().log_verbose("terminal: " + std::to_string(term.rows()) + "x" + std::to_string(term.cols()) + " (rows x cols, raw ioctl)");
 
     std::string last_frame_str;
     auto last_frame_written_at = std::chrono::steady_clock::now();
+    bool gfx_shown = false;
+    unsigned long gfx_tick = 0;
+
 
     while (!quit_) {
+        const auto frame_start = std::chrono::steady_clock::now();
+        // the image style needs to know what the terminal speaks: ask once, and again when the protocol setting changes
+        if (settings_.osci_style == 1 && gfx_probed_pref_ != settings_.gfx_protocol) {
+            if (gfx_shown) { write_frame(gfx_clear(gfx_proto_)); gfx_shown = false; }
+            gfx_proto_ = gfx_probe(settings_.gfx_protocol);
+            gfx_probed_pref_ = settings_.gfx_protocol;
+        }
         // Drain every key already queued before rendering, rather than
         // one per frame. A single keystroke can arrive as more than one
         // poll_key() call's worth of data -- any non-ASCII character (a
@@ -10018,7 +10474,10 @@ int App::run() {
                        playlist_text_field);
 
         for (int key = term.poll_key(); key != 0; key = term.poll_key()) {
+            const bool in_settings = mode_ == Mode::Settings || mode_ == Mode::ColorEdit;
+            if (in_settings) status_line_.clear();   // a message stays until the next key; then the "unsaved changes" note shows again
             handle_key(key);
+            if (mode_ == Mode::Settings || mode_ == Mode::ColorEdit) settings_update_dirty();
         }
 
         poll_pending_search();
@@ -10080,12 +10539,33 @@ int App::run() {
         // resend one every couple of seconds so the screen heals itself if
         // anything outside the app (a terminal resize/restore) scribbled on it.
         const auto frame_now = std::chrono::steady_clock::now();
+        bool text_written = false;
+        std::string wire;   // ONE write per frame (text + picture): two writes let the terminal paint in between = flicker
         if (frame_str != last_frame_str ||
             frame_now - last_frame_written_at > std::chrono::seconds(2)) {
-            write_frame(frame_str);
+            wire = frame_str;
             last_frame_str = std::move(frame_str);
             last_frame_written_at = frame_now;
+            text_written = true;
         }
+        // The scope image goes after the text (Sixel replaces the cells; a Kitty image sits under the text and is
+        // replaced in place). The text frame is often unchanged and then not sent at all, the picture still is.
+        {
+            ++gfx_tick;
+            const int cap = gfx_proto_ == GfxProto::Kitty ? (gfx_compressed() ? 60 : 20) : 15;
+            const unsigned long every = static_cast<unsigned long>(std::max(1, (settings_.frame_rate + cap / 2) / cap));
+            gfx_due_ = (gfx_tick % every) == 0;
+            if (gfx_ok_ && gfx_.active && gfx_proto_ != GfxProto::None) {
+                const bool visible = gfx_.crop < gfx_.cols;
+                if (visible && (gfx_.fresh || text_written || !gfx_shown)) { wire += gfx_emit(gfx_proto_, gfx_); gfx_shown = true; }
+                else if (!visible && gfx_shown) { wire += gfx_clear(gfx_proto_); gfx_shown = false; }
+            } else if (gfx_shown) {
+                wire += gfx_clear(gfx_proto_);
+                gfx_shown = false;
+            }
+            if (gfx_proto_ == GfxProto::None) gfx_shown = false;
+        }
+        if (!wire.empty()) write_frame(wire);
         // 25fps (was 12.5fps) — the 700ms waveform reveal animation only
         // got ~9 frames to work with at the old 80ms cadence, which
         // showed as a handful of visible ~11% jumps rather than a smooth
@@ -10093,29 +10573,39 @@ int App::run() {
         // visualizer's motion generally. Text-frame rendering is cheap
         // enough that doubling the rate here is not a meaningful CPU/
         // battery concern.
-        std::this_thread::sleep_for(std::chrono::milliseconds(40));
+        std::this_thread::sleep_until(frame_start + std::chrono::microseconds(1000000 / std::max(1, settings_.frame_rate)));
     }
 
-    // One play may still be open: quitting mid-track is not "heard to the
-    // end", so it closes as a skip (history_end_current_play() reads
-    // player_.finished(), which stop_device_worker() below would clear) and
-    // the file gets its final write for this session.
+    if (gfx_shown) { write_frame(gfx_clear(gfx_proto_)); gfx_shown = false; }   // the picture must not outlive the mode
+    if (switch_mode_) {
+        // Switching to the radio: the player is only SUSPENDED (kept in memory, so coming back is instant and shows
+        // the very same screen). Playback is paused, the terminal is handed over without a flash of the shell.
+        if (has_track_ && !player_.is_paused()) player_.pause();
+        terminal_hold_alt_screen();
+        term.restore();
+        save_settings(settings_);
+        if (settings_.autosave_enabled) save_snapshot(build_snapshot());
+        suspended_ = true;
+        return kExitSwitchMode;
+    }
+    term.restore();
+    shutdown();
+    std::cout << "\nbye.\n";
+    return 0;
+}
+
+// Everything that has to happen when the player really ends (quit, or quit from the radio while the player was
+// suspended): close the play in the history, stop the audio, save, join the threads.
+void App::shutdown() {
+    suspended_ = false;
     history_end_current_play();
     history_.save();
-
-    // Tell the worker to stop taking new requests before touching player_
-    // directly here -- if it's mid-play() this waits (briefly) on
-    // player_mutex_ rather than tearing the device down out from under it.
     stop_device_worker();
     {
         std::lock_guard<std::mutex> lk(player_mutex_);
         player_.stop();
     }
-    term.restore();
     save_settings(settings_);
-    // Final snapshot on a clean quit -- same single-canonical-file
-    // save_snapshot() the 30s autosave tick uses, just with the exact
-    // position at the moment of quitting rather than up to 30s stale.
     if (settings_.autosave_enabled) {
         save_snapshot(build_snapshot());
         ConsoleLog::instance().log_basic("saved session snapshot on exit");
@@ -10124,16 +10614,9 @@ int App::run() {
     if (search_thread_.joinable()) search_thread_.join();
     if (device_worker_thread_.joinable()) device_worker_thread_.join();
     if (bulk_add_thread_.joinable()) bulk_add_thread_.join();
-    // An AcoustID batch still in flight: let it finish (it's just a
-    // paced python subprocess), apply whatever it answered into the
-    // session, then write the autosave backup one last time. Quitting with
-    // unsaved edits is *supposed* to leave them on disk -- the session file
-    // IS the backup, and only Ctrl+Shift+S or Ctrl+Shift+X ever clears it.
     if (meta_fetch_thread_.joinable()) meta_fetch_thread_.join();
     poll_pending_meta_fetch();
     meta_persist();
-    std::cout << "\nbye.\n";
-    return 0;
 }
 
 } // namespace muisc

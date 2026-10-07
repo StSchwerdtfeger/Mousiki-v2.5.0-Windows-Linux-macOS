@@ -1,7 +1,9 @@
+#include <memory>
 #include <clocale>
 #include <iostream>
 #include <string>
 #include "app.h"
+#include "mode_switch.h"
 
 #if defined(_WIN32)
 #include "win_compat.h"
@@ -58,10 +60,28 @@ int main() {
     // this app touches parse the same way on every machine.
     std::setlocale(LC_NUMERIC, "C");
 
-    int rc;
+    // Ctrl+Shift+M ends the running mode and starts the other one. Each mode is created inside its own scope, so
+    // everything it held (audio device, threads, caches) is released before the next one starts.
+    int rc = 0;
+    std::unique_ptr<muisc::App> app;   // lives while the radio runs (suspended, playback paused); the radio itself is destroyed on every switch
     try {
-        muisc::App app;
-        rc = app.run();
+        bool radio = false;
+        for (;;) {
+            if (!radio) {
+                muisc::set_emoji_replacement(false);   // the radio forces "?" for emoji; the player follows its setting
+                if (!app) app = std::make_unique<muisc::App>();
+                rc = app->run();
+            } else {
+                char arg0[] = "mousiki";
+                char* argv[] = {arg0, nullptr};
+                rc = radio_main(1, argv);
+            }
+            if (rc != kExitSwitchMode) break;
+            radio = !radio;
+            rc = 0;
+        }
+        if (app && app->suspended()) app->shutdown();   // quit from the radio: now the player really ends
+        muisc::terminal_release_alt_screen();   // (only does something when a mode ended for a switch and the other one never started)
     } catch (const std::exception& e) {
         // Belt-and-braces on top of settings.cpp's own try/catch around
         // config.txt parsing: this catches anything else startup could

@@ -38,7 +38,7 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
 
     StreamingPcm& pcm = *self->pcm_;
     long long cur = self->cursor_frames_.load();
-    float gain = self->gain_.load();
+    float gain = self->gain_.load() * self->fade_.load();
 
     // Channel handling. The device is always stereo. A stereo buffer plays as
     // stereo when the option is on, otherwise it is folded to mono; a mono

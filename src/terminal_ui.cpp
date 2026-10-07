@@ -81,6 +81,12 @@ static void remove_fatal_signal_handlers() {
 }
 #endif
 
+static bool g_alt_screen_held = false;
+void terminal_hold_alt_screen() { g_alt_screen_held = true; }
+void terminal_release_alt_screen() {
+    if (g_alt_screen_held) { std::cout << "\x1b[?25h" << "\x1b[?1049l" << std::flush; g_alt_screen_held = false; }
+}
+
 TerminalIO::TerminalIO() {
 #if defined(_WIN32)
     // The console mode/code-page save already happened in main() via
@@ -117,7 +123,12 @@ TerminalIO::TerminalIO() {
     // miscalculation, the damage is contained to mousiki's own private
     // buffer instead of polluting the terminal the person is actually
     // going to keep using afterwards.
-    std::cout << "\x1b[?1049h" << "\x1b[?25l" << std::flush; // enter alt-screen, hide cursor
+    if (g_alt_screen_held) {   // taken over from the mode that just ended: stay on the alternate screen, just blank it
+        g_alt_screen_held = false;
+        std::cout << "\x1b[2J\x1b[H\x1b[?25l" << std::flush;
+    } else {
+        std::cout << "\x1b[?1049h" << "\x1b[?25l" << std::flush; // enter alt-screen, hide cursor
+    }
 }
 
 TerminalIO::~TerminalIO() { restore(); }
@@ -130,7 +141,7 @@ void TerminalIO::restore() {
         remove_fatal_signal_handlers();
         tcsetattr(STDIN_FILENO, TCSANOW, &g_orig_termios);
 #endif
-        std::cout << "\x1b[?25h" << "\x1b[?1049l" << std::flush; // show cursor, leave alt-screen
+        if (!g_alt_screen_held) std::cout << "\x1b[?25h" << "\x1b[?1049l" << std::flush; // show cursor, leave alt-screen (not when the other mode takes it over)
         raw_mode_active_ = false;
     }
 }
@@ -395,6 +406,7 @@ int TerminalIO::poll_key() {
                     if (code == 'X' || code == 'x') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
                     if (code == 'U' || code == 'u') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
                     if (code == 'Z' || code == 'z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
+                    if (code == 'M' || code == 'm') { g_last_key_was_arrow = false; return kKeyCtrlShiftM; }
                 }
                 // "1;<mod> A" -- an arrow (or Home/End) pressed WITH a
                 // modifier, which is how xterm-style terminals report

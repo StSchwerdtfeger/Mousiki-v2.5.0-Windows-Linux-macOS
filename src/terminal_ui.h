@@ -74,6 +74,8 @@ constexpr int kKeyAltRight = 311;
 // palette, which swallowed the keystroke before this app ever saw it.)
 constexpr int kKeyCtrlShiftU = 312;
 constexpr int kKeyCtrlShiftZ = 313;
+// Ctrl+Shift+M -- switch between the music player and the radio mode.
+constexpr int kKeyCtrlShiftM = 314;
 
 // Alt+L -- the lyrics timing overlay (main UI). Another modifier combination,
 // so another sentinel (see kKeyCtrlShiftS/X above); not rebindable.
@@ -107,6 +109,12 @@ constexpr int kKeyAltL = 314;
 
 // Raw, non-canonical, no-echo terminal mode + non-blocking key reads.
 // Panel/box drawing lives in app.cpp; this is just the terminal plumbing.
+// Mode switch (player <-> radio): the next TerminalIO() takes over the alternate screen instead of the shell being shown
+// for a moment. terminal_hold_alt_screen() is called by the mode that is ending, right before its TerminalIO is
+// destroyed; terminal_release_alt_screen() (main(), when no mode took the screen over) puts the shell back.
+void terminal_hold_alt_screen();
+void terminal_release_alt_screen();
+
 class TerminalIO {
 public:
     TerminalIO();

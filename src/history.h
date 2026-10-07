@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <map>
 #include <string>
 #include <vector>
@@ -53,6 +54,9 @@ struct HistoryStats {
     double avg_day_sec = 0.0;   // listened per day that had any music at all
     double total_sec = 0.0;
     int days = 0;               // distinct calendar days with music
+    std::array<double, 24> hours{};     // seconds listened per hour of the day (lifetime)
+    std::array<double, 7> weekdays{};   // seconds listened per weekday, 0 = Monday (lifetime)
+    int busiest_hour = -1;
 };
 
 // ---------------------------------------------------------------------------
@@ -76,6 +80,8 @@ struct HistoryArchive {
     double listened_sec = 0.0;
     std::map<std::string, HistoryArchiveTitle> titles;  // per title: play count + time (Top Tracks, Replays)
     std::map<std::string, double> per_day;              // "YYYY-MM-DD" -> seconds (Days with music, averages)
+    std::array<double, 24> hours{};                     // seconds per hour of the day (the hour a play started in)
+    std::array<double, 7> weekdays{};                   // seconds per weekday, 0 = Monday
     // Sessions, kept exactly: closed ones as count + summed length, plus the
     // one still "open" at the oldest end of the live window, which the window's
     // oldest plays may still continue (see history_stats()).
@@ -95,6 +101,11 @@ public:
     // error: history is a convenience, never something that should stop the
     // app from starting.
     void load();
+    // Folder that holds history.json ("" = the default, ~/.cache/mousiki/history). Only sets it: call load() / save() after.
+    void set_dir(const std::string& dir_utf8) { dir_ = dir_utf8; }
+    const std::string& dir() const { return dir_; }
+    bool file_exists() const;
+    std::string effective_dir() const;   // the folder in use (the default when none is set)
     // Written after every finished play and again at shutdown.
     void save() const;
 
@@ -126,6 +137,8 @@ public:
 
 private:
     void trim_overflow();             // folds the oldest records into archive_ while over the cap
+    std::string dir_;                 // history folder override (UTF-8), "" = default
+    std::string file_utf8() const;
     HistoryArchive archive_;
     std::vector<HistoryPlay> plays_;  // newest first, capped
     int live_index_ = -1;             // index of the in-progress record, -1 when none

@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cmath>
@@ -59,6 +60,8 @@ public:
 
     void seek_relative(double delta_sec);
     void set_volume(int volume_pct);
+    // Extra gain 0..1 on top of the volume (the sleep timer's fade-out); 1 = untouched.
+    void set_fade(float f) { fade_.store(std::clamp(f, 0.0f, 1.0f)); }
     int volume() const;
 
     // Stereo on/off. The device is always opened with two channels; a stereo
@@ -144,6 +147,7 @@ private:
     std::atomic<long long> cursor_frames_{0};
     std::atomic<bool> finished_{false};
     std::atomic<float> gain_{0.7f};
+    std::atomic<float> fade_{1.0f};
     std::atomic<bool> paused_{false};
     std::atomic<int> volume_pct_{70};
 

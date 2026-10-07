@@ -37,61 +37,52 @@ namespace muisc {
 // with every block it sends to the device (one short lock, nothing ever
 // allocated on the audio thread); render() snapshots that ring on the
 // render thread.
+// Since the radio mode's scope was merged in, the visualizer also offers: line interpolation on/off, a Z axis (beam
+// intensity), trace length, 45 degree rotation (M/S view), the mono phase portrait on/off, per-subpixel brightness and a
+// "frequency" value per cell (so the picture can be coloured by pitch), and render_image(): the same beam as a real pixel
+// picture that the terminal draws itself (Kitty graphics / Sixel, see terminal_gfx.h).
 class OscilloscopeVisualizer {
 public:
     struct Cell {
-        uint8_t braille = 0; // U+2800 dot pattern, 0 = empty cell
-        uint8_t level = 0;   // 0..255 brightness of the brightest subpixel
+        uint8_t braille = 0;                 // U+2800 dot pattern, 0 = empty cell
+        uint8_t level = 0;                   // 0..255 brightness of the brightest subpixel
+        std::array<uint8_t, 8> sub{};        // brightness per subpixel (index = row * 2 + column, 0 below the dot threshold)
+        uint8_t hue = 0;                     // 0..255 "frequency" of the brightest subpixel (beam speed: slow 0 .. fast 255)
     };
-
-    // The three look-and-feel knobs, adjustable live from the main UI's
-    // oscilloscope overlay (SHIFT+O). Passed into every render() call
-    // instead of being stored here, so no thread ever races with a setter.
     struct Params {
-        // Afterglow: the phosphor buffer is multiplied by this every
-        // frame. Higher = longer trails (0.00 .. 0.99; 1.0 would never fade).
-        float decay = 0.80f;
-        // Brightness (0..1) a subpixel needs to light a braille dot.
-        // Lower = thicker/softer line, higher = thin, sharp core.
-        float dot_threshold = 0.28f;
-        // Brightness (0..1) of the OLDEST sample in a frame's trace
-        // relative to the newest (1.0). Low = comet-like fading tail.
-        float tail_brightness = 0.45f;
+        float decay = 0.80f;                 // afterglow per frame
+        float dot_threshold = 0.28f;         // brightness a subpixel needs to light
+        float tail_brightness = 0.45f;       // oldest sample of the trace relative to the newest
+        bool interpolate = true;             // connect the samples with lines (off: only the sample dots)
+        bool z_axis = false;                 // beam intensity follows the Z signal
+        float z_depth = 0.70f;               // how strongly Z darkens the beam, 0 .. 1
+        int z_source = 0;                    // 0 = beam speed (fast = dim, like a CRT), 1 = signal level (far from centre = bright)
+        int trace = 1024;                    // samples drawn per frame, 128 .. 1024
+        bool rotate = false;                 // turn the picture by 45 degrees: mid on the vertical, side on the horizontal axis
+        bool mono_phase = true;              // near-mono signals cross-fade to a phase portrait (else a diagonal line)
+        float glow = 0.60f;                  // render_image(): strength / size of the bloom around the beam, 0 .. 1
     };
-
-    // AUDIO CALLBACK thread. `interleaved_lr` is the exact stereo block
-    // just written to the device (L,R,L,R,... -- post gain, post
-    // normalisation, post limiter). Fixed-size ring, never allocates; a
-    // block larger than the ring keeps only its tail.
     void push_frames(const float* interleaved_lr, size_t frames);
-
-    // Clears the ring, the auto-gain state and the phosphor afterglow --
-    // call when a new track starts (same contract as FftVisualizer::reset()).
     void reset();
-
-    // RENDER thread (single caller). Returns `rows` rows of `cols` cells.
-    // Every row has exactly `cols` entries, empty cells included, so the
-    // caller can pad/colour without any width bookkeeping. The drawing area
-    // is the largest centred square of the grid (a braille subpixel is
-    // square on screen), so circles stay circles.
     std::vector<std::vector<Cell>> render(int cols, int rows, const Params& params);
-
+    // w x h pixel picture: `level` = brightness 0..255 (bloom included), `hue` = the "frequency" 0..255 of the nearest beam pixel.
+    void render_image(int w, int h, const Params& params, std::vector<uint8_t>& level, std::vector<uint8_t>& hue);
 private:
+    void paint(int pw, int ph, const Params& params);   // beam -> glow_ / hue_ (render thread)
     static constexpr int kRingFrames = 2048;
-    static constexpr int kWindow = 1024; // newest samples drawn per frame
-
-    std::mutex mtx_; // guards ring_/write_/peak_/reset flag across audio + render threads
+    static constexpr int kWindow = 1024;
+    std::mutex mtx_;
     std::array<float, kRingFrames> ch0_{};
     std::array<float, kRingFrames> ch1_{};
     int write_ = 0;
     float peak_ = 0.05f;
-    bool cleared_ = false; // set by reset(), consumed by render() to wipe the afterglow
-
-    // Render-thread-only state (never touched by the audio thread).
-    std::vector<float> glow_; // phosphor buffer, pw*ph, 0..1
+    bool cleared_ = false;
+    std::vector<float> glow_;
+    std::vector<float> hue_;
     int glow_w_ = 0, glow_h_ = 0;
-    float mono_ = 0.0f;  // smoothed 0 (true XY) .. 1 (phase portrait) cross-fade
-    float scale_ = 0.0f; // smoothed ds/dt -> amplitude scale for the phase portrait
+    float mono_ = 0.0f;
+    float scale_ = 0.0f;
+    float hue_lo_ = 0.25f, hue_hi_ = 0.85f;   // smoothed range of the beam speeds, so every palette gets used
 };
 
 } // namespace muisc

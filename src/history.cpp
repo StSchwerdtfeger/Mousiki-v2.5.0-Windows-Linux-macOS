@@ -30,14 +30,14 @@ namespace {
 constexpr size_t kMaxPlays = 1000;
 constexpr long long kSessionGapSec = 30 * 60;
 
-fs::path history_path() {
+fs::path default_history_dir() {
     const char* home = std::getenv("HOME");
     // HOME is UTF-8 on every platform this app runs on (win_bootstrap_env()
     // builds it from GetEnvironmentVariableW) -- path_from_utf8() is what
     // keeps a non-ASCII profile name from turning into ANSI garbage here,
     // exactly as in snapshot.cpp.
     fs::path base = home ? path_from_utf8(home) : fs::path(".");
-    return base / ".cache" / "mousiki" / "history" / "history.json";
+    return base / ".cache" / "mousiki" / "history";
 }
 
 Value play_to_json(const HistoryPlay& p) {
@@ -103,6 +103,12 @@ Value archive_to_json(const HistoryArchive& a) {
     Value days = Value::make_obj();
     for (const auto& kv : a.per_day) days.set(kv.first, Value::make_num(kv.second));
     v.set("days", days);
+    Value hrs = Value::make_arr();
+    for (double x : a.hours) hrs.arr.push_back(Value::make_num(x));
+    v.set("hours", hrs);
+    Value wds = Value::make_arr();
+    for (double x : a.weekdays) wds.arr.push_back(Value::make_num(x));
+    v.set("weekdays", wds);
     v.set("sess_closed", Value::make_num(a.sessions_closed));
     v.set("sess_sum", Value::make_num(a.session_sum_sec));
     v.set("sess_open", Value::make_bool(a.session_open));
@@ -135,6 +141,10 @@ void archive_from_json(const Value& v, HistoryArchive& a) {
     if (auto* x = v.find("days")) {
         if (x->type == Type::Object) for (const auto& kv : x->obj) a.per_day[kv.first] = kv.second.as_number(0.0);
     }
+    if (auto* x = v.find("hours"))
+        if (x->type == Type::Array) for (size_t i = 0; i < 24 && i < x->arr.size(); ++i) a.hours[i] = x->arr[i].as_number(0.0);
+    if (auto* x = v.find("weekdays"))
+        if (x->type == Type::Array) for (size_t i = 0; i < 7 && i < x->arr.size(); ++i) a.weekdays[i] = x->arr[i].as_number(0.0);
     if (auto* x = v.find("sess_closed")) a.sessions_closed = static_cast<int>(x->as_number(0.0));
     if (auto* x = v.find("sess_sum")) a.session_sum_sec = x->as_number(0.0);
     if (auto* x = v.find("sess_open")) a.session_open = x->as_bool(false);
@@ -157,6 +167,14 @@ std::string history_track_id(bool is_local, const std::string& path, const std::
 // Same bookkeeping history_stats() does for the window, applied to one record
 // that is about to leave it. Oldest -> newest, so the session walk below is
 // the forward direction too.
+// The time-of-day / weekday buckets: a play counts, with the seconds heard, for the hour and the weekday it started in.
+static void add_time_buckets(const HistoryPlay& p, std::array<double, 24>& hours, std::array<double, 7>& weekdays) {
+    if (p.started_at <= 0) return;
+    const std::tm tm = local_tm(p.started_at);
+    hours[static_cast<size_t>(std::clamp(tm.tm_hour, 0, 23))] += p.listened_sec;
+    weekdays[static_cast<size_t>(((tm.tm_wday % 7) + 6) % 7)] += p.listened_sec;   // Monday first
+}
+
 void HistoryArchive::fold(const HistoryPlay& p) {
     ++plays;
     if (p.finished) ++finished;
@@ -169,6 +187,7 @@ void HistoryArchive::fold(const HistoryPlay& p) {
         ++t.plays;
         t.listened_sec += p.listened_sec;
     }
+    add_time_buckets(p, hours, weekdays);
     if (p.started_at > 0) {
         per_day[day_key(p.started_at)] += p.listened_sec;
         const long long p_end = p.started_at + static_cast<long long>(p.listened_sec + 0.5);
@@ -191,12 +210,26 @@ void HistoryArchive::fold(const HistoryPlay& p) {
 // Store
 // ---------------------------------------------------------------------------
 
+std::string HistoryStore::file_utf8() const {
+    const fs::path dir = dir_.empty() ? default_history_dir() : path_from_utf8(dir_);
+    return path_utf8(dir / "history.json");
+}
+
+std::string HistoryStore::effective_dir() const {
+    return dir_.empty() ? path_utf8(default_history_dir()) : dir_;
+}
+
+bool HistoryStore::file_exists() const {
+    std::error_code ec;
+    return fs::exists(path_from_utf8(file_utf8()), ec);
+}
+
 void HistoryStore::load() {
     plays_.clear();
     archive_ = HistoryArchive();
     live_index_ = -1;
 
-    fs::path p = history_path();
+    fs::path p = path_from_utf8(file_utf8());
     std::error_code ec;
     if (!fs::exists(p, ec)) return;
 
@@ -232,7 +265,7 @@ void HistoryStore::trim_overflow() {
 }
 
 void HistoryStore::save() const {
-    fs::path p = history_path();
+    fs::path p = path_from_utf8(file_utf8());
     std::error_code ec;
     fs::create_directories(p.parent_path(), ec);
 
@@ -375,12 +408,19 @@ HistoryStats history_stats(const std::vector<HistoryPlay>& plays, const HistoryA
         s.total_sec += archive->listened_sec;
         for (const auto& kv : archive->titles) per_title[kv.first] += kv.second.plays;
         per_day = archive->per_day;
+        s.hours = archive->hours;
+        s.weekdays = archive->weekdays;
     }
     for (const HistoryPlay& p : plays) {
         if (p.finished) ++total_finished;
         if (!p.id.empty()) ++per_title[p.id];
         s.total_sec += p.listened_sec;
         if (p.started_at > 0) per_day[day_key(p.started_at)] += p.listened_sec;
+        add_time_buckets(p, s.hours, s.weekdays);
+    }
+    {
+        double best = 0;
+        for (int h = 0; h < 24; ++h) if (s.hours[static_cast<size_t>(h)] > best) { best = s.hours[static_cast<size_t>(h)]; s.busiest_hour = h; }
     }
     s.plays = static_cast<int>(total_plays);
     s.finished = static_cast<int>(total_finished);

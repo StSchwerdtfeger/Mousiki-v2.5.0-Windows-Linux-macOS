@@ -1,0 +1,17 @@
+#pragma once
+#include <string>
+
+// Which keyboard layout is in use, so the cheat sheets can name the key that switches between the music player and the
+// radio the way it is printed on THIS keyboard. The switch key types the character '*' (the key is checked as that
+// character), which sits on different keys on different layouts:
+//   German / Austrian / Spanish / Italian   SHIFT and the + key        -> "SHIFT and +"
+//   US / UK / Irish / Canadian / Australian SHIFT and the 8 key         -> "SHIFT+8"
+//   anything else, or unknown               just the character          -> "*"
+// Detection (once, cached): Linux XKB_DEFAULT_LAYOUT, `setxkbmap -query`, `localectl status`, /etc/default/keyboard, then the
+// locale; macOS the selected input source; Windows GetKeyboardLayout().
+namespace muisc {
+
+std::string keyboard_layout_code();     // "de", "us", "gb", "fr", ... or "" when it cannot be told
+std::string mode_switch_key_label();    // the text shown in the cheat sheets (see above)
+
+} // namespace muisc

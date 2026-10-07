@@ -1,5 +1,6 @@
 #pragma once
 #include <filesystem>
+#include <iosfwd>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -9,6 +10,27 @@
 namespace muisc {
 
 namespace fs = std::filesystem;
+
+// Palettes of the oscilloscope (Color row of the SHIFT+O overlay). 0 = the VIZ gradient of the COLORS tab laid over the
+// picture from left to right; the others colour by the beam speed (about the pitch: slow = first colour, fast = last colour).
+constexpr int kOsciPaletteCount = 8;
+extern const char* const kOsciPaletteNames[kOsciPaletteCount];   // gradient, settings, temperature, aurora, magma, ice, neon, spectrum
+
+// The oscilloscope's parameters of ONE style (braille or image).
+struct OsciSet {
+    float decay = 0.80f;                // afterglow per frame, 0.00 .. 0.99
+    float dot_threshold = 0.28f;        // braille: brightness a subpixel needs to light a dot, 0.01 .. 1.00
+    float tail = 0.45f;                 // brightness of the oldest trace sample, 0.00 .. 1.00
+    bool interp = true;                 // Line/Vec. Interpol.: connect the samples with lines
+    bool z = false;                     // Z-Axis (XYZ mode): the beam intensity follows a Z signal
+    float z_depth = 0.70f;              // 0.00 .. 1.00, how strongly Z modulates the beam
+    int z_source = 0;                   // 0 = beam speed, 1 = signal level
+    int trace = 1024;                   // samples per frame, 128 .. 1024
+    bool rotate = false;                // 45 degree rotation (M/S view)
+    bool mono_phase = true;             // near-mono signals draw a phase portrait instead of a diagonal line
+    int palette = 0;                    // see kOsciPaletteNames
+    float glow = 0.60f;                 // image: size / strength of the bloom around the beam, 0.00 .. 1.00
+};
 
 // Colors: every field holds a plain decimal ANSI 256-color palette index
 // as a string, "1".."255". "0" (or empty) means "no color" -- inherit
@@ -31,11 +53,15 @@ struct Settings {
     // the panel now always shows one of the two and this row picks
     // which, from the ON/OFF tab's "Lyric Viz" entry.
     int lyric_viz = 0;
-    // Oscilloscope look (config.txt OsciDecay / OsciDotThreshold /
-    // OsciTailBrightness), tuned live from the SHIFT+O overlay in the main UI.
-    float osci_decay = 0.80f;          // afterglow per frame, 0.00 .. 0.99
-    float osci_dot_threshold = 0.28f;  // brightness a subpixel needs to light a dot, 0.01 .. 1.00
-    float osci_tail_brightness = 0.45f; // brightness of the oldest trace sample, 0.00 .. 1.00
+    // Oscilloscope look, tuned live from the SHIFT+O overlay in the main UI (config.txt: Osci* / OsciImage*).
+    // Each style (braille / image) keeps its own parameter set; osci() is the one in use.
+    OsciSet osci_set[2];                // [0] = braille, [1] = image
+    int osci_style = 0;                 // 0 = braille characters, 1 = image (a real pixel picture: Kitty graphics / Sixel)
+    std::string gfx_protocol = "auto";  // image style: auto | kitty | sixel | off
+    std::string cell_pixels;            // image style: pixels of one terminal cell "WxH"; empty = ask the terminal
+    int frame_rate = 30;                // screen refresh: 30 | 45 | 60 | 90 frames per second
+    OsciSet& osci() { return osci_set[osci_style == 1 ? 1 : 0]; }
+    const OsciSet& osci() const { return osci_set[osci_style == 1 ? 1 : 0]; }
     int lyrics_alignment = 0; // 0=center (default), 1=left, 2=right
     int lyrics_animation = 0; // 0=full (default), 1=word by word, 2=letter by letter, 3=only active line, 4=only active word
     bool element_visualizer = true;
@@ -134,6 +160,8 @@ struct Settings {
     // drawn in -- changeable from the Colors tab's LEGEND row, or ColorLegend=
     // in config.txt. "0"/empty = the terminal's own text color.
     std::string legend_color = "90";
+    std::string tab_current_color = "10";   // settings / playlist / history tab strips: the current tab "[NAME]" and the "< \u2194 >" hint
+    std::string tab_other_color = "90";     // ... the other tab names
 
     std::string visualizer_color = "32";
     std::string visualizer_color_end = "33";
@@ -200,6 +228,9 @@ struct Settings {
     // each. They come after the built-in presets in the preset cycle.
     std::vector<EqCustomPreset> eq_custom_presets;
 
+    // Sleep timer: glide the volume down over the last 10 % of the time before pausing (Shift+Z overlay).
+    bool sleep_fade = true;
+
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;
     bool autosave_indicator = true;
@@ -233,6 +264,10 @@ struct Settings {
     // second LocalMusicPath line. Editable from the PATHS tab's DOWNLOAD
     // FOLDER row.
     std::string download_folder;
+
+    // Folder that holds the listening history (history.json). Empty = ~/.cache/mousiki/history. ONE folder
+    // (Settings -> PATHS -> HISTORY PATH, config.txt: HistoryPath=).
+    std::string history_path;
 
     // --- playlists folder -----------------------------------------------
     // Where saved playlists (App::playlists_dir()) live. Empty (the
@@ -321,5 +356,19 @@ void apply_default_hotkeys(Settings& s);
 fs::path config_path();
 Settings load_settings();
 void save_settings(const Settings& s);
+// The text save_settings() would write (used to tell whether the settings screen changed anything).
+std::string settings_to_text(const Settings& s);
+
+// ---- the SHIFT+O overlay (osci_settings.cpp) ----
+enum OsciRow { kOrDecay, kOrDot, kOrTail, kOrInterp, kOrZ, kOrZDepth, kOrZSource, kOrTrace, kOrRotate, kOrMono, kOrPalette, kOrGlow,
+               kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOsciRowCount };
+std::vector<int> osci_visible_rows(const Settings& s);          // the rows the overlay shows for the style in use
+std::string osci_row_label(int row);
+std::string osci_row_value(const Settings& s, int row);
+void osci_adjust(Settings& s, int row, int dir);                // dir = +1 / -1
+void osci_reset(Settings& s);                                   // the parameters of the style in use
+// config.txt keys Osci* / OsciImage* / OsciStyle / OsciImageProtocol / OsciCellPixels / FrameRate. True = the key was one of them.
+bool osci_config_key(Settings& s, const std::string& key, const std::string& value);
+void osci_config_write(std::ostream& out, const Settings& s);
 
 } // namespace muisc
