@@ -487,7 +487,7 @@ const char* const kAboutLines[] = {
     "Version  : original and final v1.0       Licence  : Apache licence 2.0",
     "",
     "Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger",
-    "Version      : v2.5.0                    Licence  : Apache licence 2.0",
+    "Version      : v3.0.0                    Licence  : Apache licence 2.0",
     "",
     "Adjusted to also run on Windows. Several features and modifications were",
     "added, the general design remained. Additions: playlist menu, meta data ",
