@@ -25,30 +25,33 @@ ColorHeader=10
 # Key command legends (the grey hint lines such as "[ESC] close" in the Settings, the big
 # list / queue overlays, the playlist / meta editor and the history) -- 0 = terminal default
 ColorLegend=90
+ColorTabCurrent=90
+ColorTabOther=10
 
 # List
-ColorListInactiveFg=255
+ColorListInactiveFg=
 ColorListInactiveBg=
-ColorListPlayingFg=245
-ColorListPlayingBg=
-ColorListCursorFg=
-ColorListCursorBg=240
+ColorListPlayingFg=30
+ColorListPlayingBg=182
+ColorListCursorFg=10
+ColorListCursorBg=238
 
 # Queue
-ColorQueueInactiveFg=255
+ColorQueueInactiveFg=
 ColorQueueInactiveBg=
-ColorQueuePlayingFg=245
-ColorQueuePlayingBg=
-ColorQueueCursorFg=
-ColorQueueCursorBg=240
+ColorQueuePlayingFg=30
+ColorQueuePlayingBg=182
+ColorQueueCursorFg=10
+ColorQueueCursorBg=238
 
 # Lyrics
-ColorLyricsInactiveFg=245
+ColorLyricsInactiveFg=
 ColorLyricsInactiveBg=
-ColorLyricsActiveLineFg=251
+ColorLyricsActiveLineFg=182
 ColorLyricsActiveLineBg=
-ColorLyricsActiveWordFg=255
-ColorLyricsActiveWordBg=0
+ColorLyricsActiveWordFg=
+ColorLyricsActiveWordBg=
+
 ##-------------------------------------------
 ##              PANEL 2: ON/OFF
 ##-------------------------------------------
