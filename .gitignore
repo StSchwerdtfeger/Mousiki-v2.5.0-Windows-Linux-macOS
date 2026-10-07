@@ -1,0 +1,4 @@
+packaging/work/
+packaging/dist/
+packaging/input/*.zip
+__pycache__/
