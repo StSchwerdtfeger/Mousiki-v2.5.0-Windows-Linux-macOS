@@ -111,6 +111,9 @@ struct RadioSettings {
     std::string history_path;                   // <path>/radio_history/history_radio.txt
     // --- sleep timer (SHIFT+z overlay) and the REFERENCE tab ------------------------------------------
     bool tune_noise = false;                    // ON/OFF tab: static that fades in / out when another station is tuned
+    // ON/OFF tab: how much of the tuned station is kept for pause / rewind / recording from the past, as an index into
+    // kTimeshiftMinutes (5 / 15 / 30 / 45 / 60 min). Kept on disk: 11.5 MB per minute.
+    int timeshift_idx = 2;
     bool sleep_fade = true;                     // the sleep timer fades the volume out before it stops the stream
     std::map<std::string, std::string> keys;    // rebound keys by action id (kKeyActions); absent = the default
     int visualizer_fluidity = 1;                // 1-10, higher = smoother / slower rise
@@ -158,6 +161,8 @@ struct OnOffRowSpec {
     int RadioSettings::* choice;    // set for the scope pick
 };
 extern const OnOffRowSpec kOnOffRows[];
+inline constexpr int kTimeshiftMinutes[5] = {5, 15, 30, 45, 60};
+inline int timeshift_minutes(const RadioSettings& s) { return kTimeshiftMinutes[s.timeshift_idx < 0 ? 0 : s.timeshift_idx > 4 ? 4 : s.timeshift_idx]; }
 extern const int kOnOffRowCount;
 // Text shown / config value of a row ("true" / "false", or "osci" / "sphere" / "off").
 std::string on_off_value(const RadioSettings& s, int row);

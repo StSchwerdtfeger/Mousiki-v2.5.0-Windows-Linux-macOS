@@ -208,6 +208,9 @@ struct StationsOverlay {
     EditState alias_edit;
 };
 
+// The record overlay's choices (y): seconds back from the moment it opened; 0 = from now on, -1 = the whole buffer.
+inline constexpr int kRecordBack[] = {0, 60, 300, 600, 900, 1800, -1};
+
 struct UiModel {
     // Terminal graphics (oscilloscope "image" style): what the terminal speaks, its cell size in pixels, and the picture the
     // last frame produced (written by render_radio_frame, sent by the main loop).
@@ -230,7 +233,13 @@ struct UiModel {
     mutable int pmarquee_row = -1;       // the tuned preset entry whose name scrolls in the PRESETS pane (-1 = none)
     mutable double pmarquee_since = 0.0;
     // Small overlay over the main screen: 1 = oscilloscope tuning (SHIFT+o), 2 = loudness normalisation (SHIFT+v).
-    int overlay = 0;                // 3 = sleep timer (SHIFT+z), 4 = equaliser (SHIFT+e)
+    int overlay = 0;                // 3 = sleep timer (SHIFT+z), 4 = equaliser (SHIFT+e), 5 = record (y)
+    // Record overlay (y): the stream position and the buffered time when it opened, so "from now on" is exactly then.
+    long long rec_anchor = 0;
+    double rec_avail_sec = 0.0;     // how far back from rec_anchor the buffer reaches
+    // Timeshift jumps: a short note at the bottom of the scope block ("-30 s  |  2:30 behind live"), 4 s.
+    std::string scope_notice;
+    double scope_notice_until = 0.0;
     EqUi eq;                        // the equaliser overlay's own state
     int sleep_running = 0;          // the minute choice that is running (0 = no timer)
     double sleep_left = 0.0;        // seconds until it stops

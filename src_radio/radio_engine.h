@@ -2,6 +2,10 @@
 // Radio mode -- the radio's OWN audio path.
 //
 //   ffmpeg (child process)  -->  worker thread  -->  RadioRing  -->  miniaudio device
+//                                      |                   ^
+//                                      v                   | (timeshift: while paused / behind live)
+//                               TimeshiftStore  ---->  feeder thread
+//                               (disk ring file, the last N minutes)
 //   (network, decode, f32le)     (reconnects)        (~10 s, drops     (own ma_device,
 //                                                      oldest on         own callback)
 //                                                      overflow)
@@ -67,6 +71,15 @@ struct RadioStatus {
     double recording_sec = 0.0;
     std::string record_note;       // result of the last finished recording ("saved <file>" / "failed: ..."); empty until one finished
     int record_serial = 0;         // counts finished recordings, so the UI can notice a new note
+    // Timeshift (pause / rewind live radio): the last minutes of the station are kept in a buffer on disk.
+    bool timeshift_paused = false;      // SPACE: paused, the stream keeps being buffered
+    bool timeshift_shifted = false;     // playing from the buffer (paused or behind the live stream)
+    double behind_sec = 0.0;            // how far the playback is behind the live stream
+    double buffered_sec = 0.0;          // how much of the station is in the buffer (grows from the tune up to the cap)
+    double timeshift_cap_sec = 0.0;     // buffer size
+    long long heard_frame = 0;          // stream position of what is being heard (frames at 48 kHz since the tune)
+    long long oldest_frame = 0;         // the oldest stream position still in the buffer
+    int timeshift_edge_hits = 0;        // the playback was pushed forward because its audio had left the buffer
 };
 
 class RadioEngine {
@@ -99,8 +112,19 @@ public:
     // `<stem>.mp3` (ID3 title = `title`) in the background and removes the WAV; if the conversion fails the WAV stays.
     // Returns false (and fills `err`) when nothing is tuned or the file cannot be created. Tuning another station or
     // stop() ends the recording too.
-    bool start_recording(const std::string& dir, const std::string& stem, const std::string& title, std::string* err = nullptr);
+    // `from_frame`: stream position the recording starts at (status().heard_frame minus N seconds for "the last N
+    // minutes"; -1 = what is being heard right now). It is copied from the timeshift buffer, follows the stream until
+    // stop_recording(), and ends at what is being heard then.
+    bool start_recording(const std::string& dir, const std::string& stem, const std::string& title,
+                         long long from_frame = -1, std::string* err = nullptr);
     void stop_recording();
+
+    // --- timeshift: pause / rewind live radio ---
+    // Buffer size in minutes and the file it lives in (call once at start and when the setting changes; empties it).
+    void set_timeshift(int minutes, const std::string& file);
+    void toggle_pause();                // pause / resume; the stream keeps being buffered while paused
+    double jump(double seconds);        // -30 = back 30 s, +30 = forward; clamped to the buffer; returns the real move
+    void go_live();                     // back to the live stream
     // false = left and right are folded together (mono); the loudness measurement restarts.
     void set_stereo(bool on);
     // Loudness normalisation like the music player's: the stream's measured loudness is brought to `target_lufs`

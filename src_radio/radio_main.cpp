@@ -321,6 +321,17 @@ int radio_main(int argc, char** argv) {
         engine.set_equalizer(cfg.eq_enabled, cfg.eq_gains);
     };
     apply_audio();
+    // Timeshift buffer (pause / rewind): a ring file in the cache folder, sized by the ON/OFF tab's "Timeshift buffer".
+    const char* ts_home = std::getenv("HOME");
+    if (!ts_home || !*ts_home) ts_home = std::getenv("USERPROFILE");
+    const std::string timeshift_file = (std::filesystem::path(ts_home && *ts_home ? ts_home : ".") / ".cache" / "mousiki" / "radio_timeshift.pcm").string();
+    int timeshift_applied = -1;
+    auto apply_timeshift = [&]() {
+        if (timeshift_minutes(cfg) == timeshift_applied) return;
+        timeshift_applied = timeshift_minutes(cfg);
+        engine.set_timeshift(timeshift_applied, timeshift_file);
+    };
+    apply_timeshift();
     RadioHistory rhist;
     RadioYt yt;
     rhist.open(storage.history_dir);
@@ -555,6 +566,27 @@ int radio_main(int argc, char** argv) {
     RadioBrowser browser;
     bool yt_jump = false;                 // after a YouTube search from the overlay: move to the results when they arrive
     double notice_until = 0.0;
+    // Starts a recording at stream position `from_frame` (frames at 48 kHz; from the record overlay). The file is
+    // named after the wall-clock time the recorded audio was on air.
+    auto start_record = [&](long long from_frame, double seconds_before_now) {
+        const RadioStatus rs = engine.status();
+        char stamp[32];
+        const std::time_t tt = std::time(nullptr) - static_cast<std::time_t>(seconds_before_now);
+        std::tm tmv{};
+#ifdef _WIN32
+        localtime_s(&tmv, &tt);
+#else
+        localtime_r(&tt, &tmv);
+#endif
+        std::strftime(stamp, sizeof stamp, "%Y-%m-%d_%H-%M-%S", &tmv);
+        std::string err;
+        const std::string title = !rs.info.title.empty() ? (rs.info.artist.empty() ? rs.info.title : rs.info.artist + " - " + rs.info.title)
+                                                          : (rs.info.station.empty() ? rs.tuned_name : rs.info.station);
+        if (engine.start_recording(storage.download_dir.string(), stamp, title, from_frame, &err)) {
+            ui.model.notice = "recording to " + (storage.download_dir / (std::string(stamp) + ".mp3")).string() + "   [y] stop";
+            notice_until = ui.model.t_sec + 8;
+        } else { ui.model.notice = "cannot record: " + err; notice_until = ui.model.t_sec + 6; }
+    };
     int record_serial_seen = engine.status().record_serial;
     // Sleep timer: minute choices, the fade-out and the stop. The fade is 10 % of the time, between 30 s and 10 min (15 min -> 90 s,
     // 30 -> 3 min, 60 -> 6 min, 90 -> 9 min, 120 -> 10 min), and the gain follows t^2 (t = time left in the fade / its length): about
@@ -974,6 +1006,8 @@ int radio_main(int argc, char** argv) {
                 engine.set_fade(static_cast<float>(t * t));
             } else engine.set_fade(1.0f);
         }
+        apply_timeshift();   // the buffer size changed in the settings (or was put back by discarding them)
+        if (!ui.model.scope_notice.empty() && ui.model.t_sec > ui.model.scope_notice_until) ui.model.scope_notice.clear();
         {   // history store, YouTube overlay and recording notices: once per frame
             const RadioStatus rs = engine.status();
             const long long now_unix = static_cast<long long>(std::time(nullptr));
@@ -1237,6 +1271,28 @@ int radio_main(int argc, char** argv) {
                 if (k == 9 || (arrow && (k == 'A' || k == 'B'))) { so.add_field ^= 1; (so.add_field ? so.add_edit[1] : so.add_edit[0]).to_end(so.add_field ? so.add_name : so.add_url); continue; }
                 std::string& buf = so.add_field ? so.add_name : so.add_url;
                 if (edit_text_key(buf, so.add_edit[so.add_field], k, 500, nullptr)) so.add_error.clear();
+                continue;
+            }
+            if (ui.model.overlay == 5 && !ui.model.cheat_open) {                 // the record overlay (y)
+                int& orow = ui.model.overlay_row;
+                constexpr int kRows = static_cast<int>(sizeof(kRecordBack) / sizeof(kRecordBack[0]));
+                if (k == 3 || k == kKeyCtrlC) { ui.model.overlay = 0; running = false; continue; }
+                if (arrow) {
+                    if (k == 'A') orow = (orow + kRows - 1) % kRows;
+                    else if (k == 'B') orow = (orow + 1) % kRows;
+                    continue;
+                }
+                if (k == 13 || k == 10 || (k == 'y' && !arrow)) {
+                    // seconds back from the moment the overlay opened (-1 = everything that is buffered)
+                    const double want = kRecordBack[orow] < 0 ? ui.model.rec_avail_sec : static_cast<double>(kRecordBack[orow]);
+                    const double back = std::min(want, ui.model.rec_avail_sec);
+                    const long long from = std::max(0LL, ui.model.rec_anchor - static_cast<long long>(back * 48000.0));
+                    const RadioStatus rs = engine.status();
+                    ui.model.overlay = 0;
+                    start_record(from, back + rs.behind_sec);
+                    continue;
+                }
+                if (k == 27) { ui.model.overlay = 0; continue; }
                 continue;
             }
             if (ui.model.overlay == 3 && !ui.model.cheat_open) {                 // the sleep timer overlay
@@ -1803,6 +1859,46 @@ int radio_main(int argc, char** argv) {
                 continue;
             }
             if (k == '*') { switch_mode = true; running = false; continue; }   // SHIFT and the + key ('*' on a German keyboard): to the music player
+            {   // Timeshift: pause / jump back and forth / back to live. Matched by the bound key itself (the key table's
+                // translation maps a key to the first letter of its default, which "SPACE" would turn into 'S').
+                auto mmss = [](double sec) {
+                    const long long t = std::max(0LL, static_cast<long long>(sec + 0.5));
+                    char b[24];
+                    if (t >= 3600) std::snprintf(b, sizeof b, "%lld:%02lld:%02lld", t / 3600, (t / 60) % 60, t % 60);
+                    else std::snprintf(b, sizeof b, "%lld:%02lld", t / 60, t % 60);
+                    return std::string(b);
+                };
+                auto show = [&](const std::string& what) {
+                    const RadioStatus a = engine.status();
+                    std::string where = a.timeshift_paused ? "paused, " + mmss(a.behind_sec) + " behind live"
+                                      : a.timeshift_shifted && a.behind_sec >= 2.5 ? mmss(a.behind_sec) + " behind live" : "live";
+                    ui.model.scope_notice = what.empty() ? where : what + "  |  " + where;
+                    ui.model.scope_notice_until = ui.model.t_sec + 4;
+                };
+                const RadioStatus ts = engine.status();
+                const bool tuned = ts.state != StreamState::Idle && ts.state != StreamState::Failed;
+                auto jump_by = [&](double sec) {
+                    if (!tuned) { ui.model.notice = "timeshift: tune a station first"; notice_until = ui.model.t_sec + 4; return; }
+                    const double moved = engine.jump(sec);
+                    char b[48];
+                    if (std::fabs(moved) < 0.5) std::snprintf(b, sizeof b, sec < 0 ? "start of the buffer" : "already live");
+                    else std::snprintf(b, sizeof b, "%s%s", moved < 0 ? "-" : "+", mmss(std::fabs(moved)).c_str());
+                    show(b);
+                };
+                if (k == key_of(cfg, "Pause")) {
+                    if (!tuned) { ui.model.notice = "timeshift: tune a station first"; notice_until = ui.model.t_sec + 4; continue; }
+                    engine.toggle_pause();
+                    show(engine.status().timeshift_paused ? "PAUSE" : "PLAY");
+                    continue;
+                }
+                if (k == key_of(cfg, "Back30")) { jump_by(-30); continue; }
+                if (k == key_of(cfg, "Fwd30")) { jump_by(30); continue; }
+                if (k == key_of(cfg, "Back5m")) { jump_by(-300); continue; }
+                if (k == key_of(cfg, "GoLive")) {
+                    if (tuned) { engine.go_live(); show("LIVE"); }
+                    continue;
+                }
+            }
             switch (key_translate(cfg, k)) {
                 case 'q': case 3: case kKeyCtrlC: running = false; break;   // q is free now that the preset keys are 1234567890ertdfg
                 case 13: case 10: tune_visible(ui.model.cursor); break;
@@ -1822,33 +1918,22 @@ int radio_main(int argc, char** argv) {
                 case '.':                              // switch the scope block between the oscilloscope and the sphere
                     cfg.scope_mode = cfg.scope_mode == 1 ? 0 : 1;
                     ui.model.settings.dirty = true;
-                    ui.model.notice = cfg.scope_mode == 1 ? "sphere" : "oscilloscope"; notice_until = ui.model.t_sec + 2;
                     break;
                 case 'h': {                            // the LISTENING HISTORY
                     HistoryModel& hm = ui.model.hmenu;
                     hm.open = true; hm.flash.clear(); hm.cursor = 0; hm.top_cursor = 0; hm.scroll = 0;
                     break;
                 }
-                case 'y': {                            // record the tuned stream
+                case 'y': {                            // record the tuned stream: y while recording stops, else the record overlay
                     const RadioStatus rs = engine.status();
                     if (rs.recording) { engine.stop_recording(); ui.model.notice = "recording stopped: converting to MP3 ..."; notice_until = ui.model.t_sec + 6; break; }
                     if (rs.state == StreamState::Idle || rs.state == StreamState::Failed) { ui.model.notice = "nothing to record: tune a station first"; notice_until = ui.model.t_sec + 4; break; }
-                    char stamp[32];
-                    const std::time_t tt = std::time(nullptr);
-                    std::tm tmv{};
-#ifdef _WIN32
-                    localtime_s(&tmv, &tt);
-#else
-                    localtime_r(&tt, &tmv);
-#endif
-                    std::strftime(stamp, sizeof stamp, "%Y-%m-%d_%H-%M-%S", &tmv);
-                    std::string err;
-                    const std::string title = !rs.info.title.empty() ? (rs.info.artist.empty() ? rs.info.title : rs.info.artist + " - " + rs.info.title)
-                                                                      : (rs.info.station.empty() ? rs.tuned_name : rs.info.station);
-                    if (engine.start_recording(storage.download_dir.string(), stamp, title, &err)) {
-                        ui.model.notice = "recording to " + (storage.download_dir / (std::string(stamp) + ".mp3")).string() + "   [y] stop";
-                        notice_until = ui.model.t_sec + 8;
-                    } else { ui.model.notice = "cannot record: " + err; notice_until = ui.model.t_sec + 6; }
+                    // "From now on" means the moment this overlay opened: that position is fixed here, so no time is lost
+                    // while choosing.
+                    ui.model.rec_anchor = rs.heard_frame;
+                    ui.model.rec_avail_sec = std::max(0.0, static_cast<double>(rs.heard_frame - rs.oldest_frame) / 48000.0);
+                    ui.model.overlay = 5;
+                    ui.model.overlay_row = 0;
                     break;
                 }
                 case 'v': cfg.normalize = !cfg.normalize; apply_audio(); ui.model.settings.dirty = true; break;   // loudness normalisation on/off

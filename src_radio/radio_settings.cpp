@@ -44,6 +44,7 @@ const OnOffRowSpec kOnOffRows[] = {
     {"Normalize volume", &RadioSettings::normalize,       nullptr},
     {"Tuning noise",     &RadioSettings::tune_noise,      nullptr},
     {"Osci style",       nullptr,                         &RadioSettings::osci_style},
+    {"Timeshift buffer", nullptr,                         &RadioSettings::timeshift_idx},
 };
 const int kOnOffRowCount = static_cast<int>(sizeof(kOnOffRows) / sizeof(kOnOffRows[0]));
 
@@ -53,6 +54,7 @@ std::string on_off_value(const RadioSettings& s, int row) {
     if (r.flag) return (s.*(r.flag)) ? "true" : "false";
     const int v = s.*(r.choice);
     if (r.choice == &RadioSettings::osci_style) return v == 1 ? "image" : "braille";
+    if (r.choice == &RadioSettings::timeshift_idx) return std::to_string(timeshift_minutes(s)) + " min";
     return v == 1 ? "sphere" : v == 2 ? "off" : "osci";
 }
 
@@ -64,7 +66,7 @@ void on_off_change(RadioSettings& s, int row, int dir) {
         b = dir == 0 ? !b : dir > 0;
     } else {
         int& v = s.*(r.choice);
-        const int n = r.choice == &RadioSettings::osci_style ? 2 : 3;
+        const int n = r.choice == &RadioSettings::osci_style ? 2 : r.choice == &RadioSettings::timeshift_idx ? 5 : 3;
         v = dir == 0 ? (v + 1) % n : (v + (dir > 0 ? 1 : n - 1)) % n;
     }
 }
@@ -420,6 +422,11 @@ const KeyAction kKeyActions[] = {
     {nullptr, "NormMenu", "Normalization Overlay", "V"},
     {nullptr, "EqMenu", "Equalizer Overlay", "E"},
     {nullptr, "ScopeToggle", "Switch Osci / Sphere", "."},   // "." like the player's lyrics-area cycle (was "o" up to v3.0.0)
+    {"TIMESHIFT", "Pause", "Pause / Resume (keeps buffering)", "SPACE"},
+    {nullptr, "Back30", "Back 30 Seconds", "["},
+    {nullptr, "Fwd30", "Forward 30 Seconds", "]"},
+    {nullptr, "Back5m", "Back 5 Minutes", "{"},
+    {nullptr, "GoLive", "Back to Live", "}"},
     {"SYSTEM", "Settings", "Open Settings", "s"},
     {nullptr, "Cheatsheet", "Cheatsheet", "?"},
     {nullptr, "Quit", "Quit Application", "q"},
@@ -589,6 +596,9 @@ RadioSettings load_radio_settings(std::string* source_out) {
     for (int i = 0; i < kKeyActionCount; ++i) {
         if (auto v = get((std::string("HKey") + kKeyActions[i].id).c_str())) {
             std::string val = *v;
+            // Configs written up to v3.0.0 saved every key, so the old default "o" of the scope switch is
+            // stored there as if it were a choice -- treat it as the old default and use the new one (".").
+            if (std::string(kKeyActions[i].id) == "ScopeToggle" && val == "o") continue;
             if (key_code(val) != 0 && val != kKeyActions[i].def) s.keys[kKeyActions[i].id] = val;
         }
     }
@@ -597,6 +607,12 @@ RadioSettings load_radio_settings(std::string* source_out) {
     if (auto v = get("DummyButtons")) s.dummy_buttons = as_bool(*v, s.dummy_buttons);
     if (auto v = get("OsciSphere")) { const std::string l = lower(*v); s.scope_mode = l == "sphere" ? 1 : l == "off" ? 2 : 0; }
     if (auto v = get("TuneNoise")) s.tune_noise = as_bool(*v, s.tune_noise);
+    if (auto v = get("TimeshiftMinutes")) {
+        const int m = std::atoi(v->c_str());
+        int best = 0;
+        for (int i = 0; i < 5; ++i) if (std::abs(kTimeshiftMinutes[i] - m) < std::abs(kTimeshiftMinutes[best] - m)) best = i;
+        s.timeshift_idx = best;
+    }
     if (auto v = get("StereoSound")) s.stereo = as_bool(*v, s.stereo);
     if (auto v = get("NormalizeVolume")) s.normalize = as_bool(*v, s.normalize);
     if (auto v = get("NormalizeTargetLufs")) s.normalize_target_lufs = as_int(*v, static_cast<int>(s.normalize_target_lufs), -40, 0);
@@ -751,6 +767,8 @@ bool save_radio_settings(const RadioSettings& s, std::string* err) {
          "StereoSound=" << (s.stereo ? "true" : "false") << "\n"
          "# static that fades in when another station is tuned and fades out when the stream plays\n"
          "TuneNoise=" << (s.tune_noise ? "true" : "false") << "\n"
+         "# timeshift buffer for pause / rewind / recording from the past: 5 | 15 | 30 | 45 | 60 minutes (on disk, 11.5 MB per minute)\n"
+         "TimeshiftMinutes=" << timeshift_minutes(s) << "\n"
          "# loudness normalisation (SHIFT+v overlay, v toggles): target -40..0 LUFS, max boost 0..24 dB\n"
          "NormalizeVolume=" << (s.normalize ? "true" : "false") << "\n"
          "NormalizeTargetLufs=" << static_cast<int>(s.normalize_target_lufs) << "\n"

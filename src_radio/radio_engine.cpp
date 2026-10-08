@@ -44,22 +44,42 @@ struct Ring {
     size_t head = 0;   // frame index of the oldest sample
     size_t count = 0;  // frames stored
     unsigned gen = 0;
+    // Timeshift: the position of the oldest stored frame in the stream since it was tuned (frames counted from the
+    // first audio, the same numbering as the TimeshiftStore). What the device plays next = head_abs.
+    long long head_abs = 0;
 
     unsigned reset() {
         std::lock_guard<std::mutex> lk(m);
         head = count = 0;
+        head_abs = 0;
         return ++gen;
     }
-    // false = this writer's generation is stale; it must stop.
-    bool write(unsigned g, const float* in, size_t frames) {
+    // Empties the ring without invalidating the writer (timeshift jumps); the next frame is `abs`.
+    void clear(long long abs) {
+        std::lock_guard<std::mutex> lk(m);
+        head = count = 0;
+        head_abs = abs;
+    }
+    unsigned current_gen() {
+        std::lock_guard<std::mutex> lk(m);
+        return gen;
+    }
+    long long heard_abs() {
+        std::lock_guard<std::mutex> lk(m);
+        return head_abs;
+    }
+    // false = this writer's generation is stale; it must stop. `abs` = stream position of in[0].
+    bool write(unsigned g, const float* in, size_t frames, long long abs = -1) {
         std::lock_guard<std::mutex> lk(m);
         if (g != gen) return false;
-        if (frames >= kRingFrames) { in += (frames - kRingFrames) * kChannels; frames = kRingFrames; head = count = 0; }
+        if (count == 0 && abs >= 0) head_abs = abs;
+        if (frames >= kRingFrames) { in += (frames - kRingFrames) * kChannels; head_abs += static_cast<long long>(frames - kRingFrames); frames = kRingFrames; head = count = 0; }
         const size_t room = kRingFrames - count;
         if (frames > room) { // live stream running ahead of the device clock: drop the oldest audio
             const size_t drop = frames - room;
             head = (head + drop) % kRingFrames;
             count -= drop;
+            head_abs += static_cast<long long>(drop);
         }
         size_t tail = (head + count) % kRingFrames;
         for (size_t i = 0; i < frames; ++i) {
@@ -77,11 +97,108 @@ struct Ring {
             if (++head == kRingFrames) head = 0;
         }
         count -= n;
+        head_abs += static_cast<long long>(n);
         return n;
     }
     size_t fill() {
         std::lock_guard<std::mutex> lk(m);
         return count;
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Timeshift store: the last N minutes of the tuned station as 16-bit stereo PCM in a ring FILE on disk
+// (~/.cache/mousiki/radio_timeshift.pcm; 48 kHz * 4 bytes = 11.5 MB per minute, so 30 min = 345 MB). On disk rather
+// than in memory so a long buffer costs no RAM, and the write rate (192 KB/s) is nothing for any disk. Frames are
+// numbered from the first audio of the tune (`end` = frames written so far); the file keeps
+// [max(0, end - cap), end). The worker writes, the timeshift feeder and the recorder read -- one FILE under a mutex,
+// with a seek before every access.
+// ---------------------------------------------------------------------------
+struct TimeshiftStore {
+    mutable std::mutex m;
+    FILE* f = nullptr;
+    std::string path;
+    long long cap = 0;                    // frames the file holds
+    std::atomic<long long> end{0};        // frames written since the tune
+    unsigned gen = 0;                     // bumped by reset(): a stale worker's writes are refused
+    std::vector<int16_t> scratch;
+
+    bool open(const std::string& p, long long cap_frames) {
+        std::lock_guard<std::mutex> lk(m);
+        if (f) { std::fclose(f); f = nullptr; }
+        path = p;
+        cap = std::max<long long>(cap_frames, kRate * 60);
+        std::error_code ec;
+        std::filesystem::create_directories(std::filesystem::path(p).parent_path(), ec);
+        f = std::fopen(p.c_str(), "w+b");
+        end.store(0);
+        return f != nullptr;
+    }
+    void close_and_remove() {
+        std::lock_guard<std::mutex> lk(m);
+        if (f) { std::fclose(f); f = nullptr; }
+        std::error_code ec;
+        if (!path.empty()) std::filesystem::remove(path, ec);
+    }
+    unsigned reset() {
+        std::lock_guard<std::mutex> lk(m);
+        end.store(0);
+        return ++gen;
+    }
+    long long oldest() const { return std::max<long long>(0, end.load() - cap); }
+    // Appends `frames` (float stereo); false if `g` is stale.
+    bool write(unsigned g, const float* in, size_t frames) {
+        std::lock_guard<std::mutex> lk(m);
+        if (g != gen) return false;
+        if (!f || frames == 0) { if (g == gen) end.fetch_add(static_cast<long long>(frames)); return true; }
+        scratch.resize(frames * kChannels);
+        for (size_t i = 0; i < scratch.size(); ++i)
+            scratch[i] = static_cast<int16_t>(std::lround(std::clamp(in[i], -1.0f, 1.0f) * 32767.0f));
+        long long pos = end.load();
+        size_t done = 0;
+        while (done < frames) {
+            const long long slot = pos % cap;
+            const size_t n = static_cast<size_t>(std::min<long long>(static_cast<long long>(frames - done), cap - slot));
+            fseek_abs(slot);
+            std::fwrite(scratch.data() + done * kChannels, sizeof(int16_t) * kChannels, n, f);
+            done += n; pos += static_cast<long long>(n);
+        }
+        end.store(pos);
+        return true;
+    }
+    // Reads up to `frames` frames starting at stream position `abs` as raw 16-bit (the recorder) -- clamped to what is
+    // still stored. Returns the frames read.
+    size_t read_raw(long long abs, int16_t* out, size_t frames) {
+        std::lock_guard<std::mutex> lk(m);
+        if (!f) return 0;
+        const long long e = end.load(), o = std::max<long long>(0, e - cap);
+        if (abs < o || abs >= e) return 0;
+        frames = static_cast<size_t>(std::min<long long>(static_cast<long long>(frames), e - abs));
+        size_t done = 0;
+        while (done < frames) {
+            const long long slot = (abs + static_cast<long long>(done)) % cap;
+            const size_t n = static_cast<size_t>(std::min<long long>(static_cast<long long>(frames - done), cap - slot));
+            fseek_abs(slot);
+            const size_t got = std::fread(out + done * kChannels, sizeof(int16_t) * kChannels, n, f);
+            done += got;
+            if (got < n) break;
+        }
+        return done;
+    }
+    size_t read(long long abs, float* out, size_t frames) {
+        std::vector<int16_t> tmp(frames * kChannels);
+        const size_t n = read_raw(abs, tmp.data(), frames);
+        for (size_t i = 0; i < n * kChannels; ++i) out[i] = static_cast<float>(tmp[i]) / 32768.0f;
+        return n;
+    }
+private:
+    void fseek_abs(long long slot) {
+        const long long byte = slot * static_cast<long long>(sizeof(int16_t) * kChannels);
+#if defined(_WIN32)
+        _fseeki64(f, byte, SEEK_SET);
+#else
+        fseeko(f, static_cast<off_t>(byte), SEEK_SET);
+#endif
     }
 };
 
@@ -92,6 +209,12 @@ struct Session {
     int index = -1;
     std::shared_ptr<Ring> ring;
     unsigned gen = 0;
+    // Timeshift: the worker writes everything into the store; the ring only gets it while `shifted` is false (live
+    // listening). switch_m makes "store, then ring" one step against the feeder's switch back to live.
+    std::shared_ptr<TimeshiftStore> store;
+    unsigned store_gen = 0;
+    std::shared_ptr<std::atomic<bool>> shifted;
+    std::shared_ptr<std::mutex> switch_m;
     std::atomic<bool> cancel{false};
     std::atomic<int> state{static_cast<int>(StreamState::Connecting)}; // Connecting/Reconnecting/Failed or 99 = receiving
     std::atomic<long long> first_audio_ms{0};
@@ -133,23 +256,30 @@ std::string ffmpeg_cmd(const Station& st) {
     return cmd;
 }
 
-// ---- recorder: the worker's decoded frames -> a 16-bit WAV (converted to MP3 when it ends) -------------------------
+// ---- recorder: copies a range of the timeshift store into a 16-bit WAV (converted to MP3 when it ends) ---------
+// Recording starts at any stream position still in the store -- "from now on" (what was playing when the overlay
+// opened) or minutes in the past -- and follows the stream until stop(): its own thread copies from the store, so a
+// long backlog ("the last 30 minutes") never holds up the audio or the UI.
 struct Recorder {
     std::mutex m;
     FILE* f = nullptr;
     std::string wav, mp3, title;
-    std::atomic<long long> frames{0};
+    std::shared_ptr<TimeshiftStore> store;
+    std::thread th;
+    std::atomic<long long> frames{0};       // written to the WAV so far
+    std::atomic<long long> start_abs{0};
+    std::atomic<long long> stop_at{-1};     // -1 = follow the stream
     std::atomic<bool> active{false};
     std::atomic<int> serial{0};
     std::atomic<int> converting{0};   // conversions still running (the destructor waits for them)
     std::string note;           // guarded by m
 
     static void put_u32(unsigned char* p, unsigned v) { for (int i = 0; i < 4; ++i) p[i] = static_cast<unsigned char>(v >> (8 * i)); }
-    static void put_u16(unsigned char* p, unsigned v) { p[0] = static_cast<unsigned char>(v); p[1] = static_cast<unsigned char>(v >> 8); }
 
-    bool start(const std::string& wav_path, const std::string& mp3_path, const std::string& t, std::string* err) {
+    bool start(std::shared_ptr<TimeshiftStore> st, long long from, const std::string& wav_path, const std::string& mp3_path,
+               const std::string& t, std::string* err) {
         std::lock_guard<std::mutex> lk(m);
-        if (f) return false;
+        if (f || active.load()) { if (err) *err = "already recording"; return false; }
         std::error_code ec;
         std::filesystem::create_directories(std::filesystem::path(wav_path).parent_path(), ec);
         f = std::fopen(wav_path.c_str(), "wb");
@@ -158,30 +288,47 @@ struct Recorder {
         put_u32(h + 24, kRate); put_u32(h + 28, kRate * kChannels * 2);
         std::fwrite(h, 1, sizeof h, f);
         wav = wav_path; mp3 = mp3_path; title = t;
+        store = std::move(st);
         frames.store(0);
+        start_abs.store(std::max(from, store->oldest()));
+        stop_at.store(-1);
         active.store(true);
+        if (th.joinable()) th.join();
+        th = std::thread([this]() { copy_loop(); });
         return true;
     }
-    void write(const float* in, size_t n) {
-        if (!active.load(std::memory_order_relaxed)) return;
-        std::lock_guard<std::mutex> lk(m);
-        if (!f) return;
-        std::vector<short> pcm(n * kChannels);
-        for (size_t i = 0; i < pcm.size(); ++i) {
-            const float v = std::clamp(in[i], -1.0f, 1.0f);
-            pcm[i] = static_cast<short>(v * 32767.0f);
+    void copy_loop() {
+        std::vector<int16_t> buf(static_cast<size_t>(kRate) * kChannels);
+        long long pos = start_abs.load();
+        for (;;) {
+            const long long stop = stop_at.load();
+            const long long end = stop >= 0 ? std::min(stop, store->end.load()) : store->end.load();
+            if (pos < store->oldest()) pos = store->oldest();   // fell out of the buffer (cannot happen while it follows)
+            if (pos < end) {
+                const size_t n = store->read_raw(pos, buf.data(), static_cast<size_t>(std::min<long long>(kRate, end - pos)));
+                if (n == 0) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); continue; }
+                std::lock_guard<std::mutex> lk(m);
+                if (f) std::fwrite(buf.data(), sizeof(int16_t) * kChannels, n, f);
+                frames.fetch_add(static_cast<long long>(n));
+                pos += static_cast<long long>(n);
+                continue;
+            }
+            if (stop >= 0) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
-        std::fwrite(pcm.data(), sizeof(short), pcm.size(), f);
-        frames.fetch_add(static_cast<long long>(n));
     }
-    // Closes the WAV and hands the conversion to a detached thread.
-    void stop() {
+    // Ends the recording at stream position `at` (what is being heard; -1 = everything stored so far), closes the WAV
+    // and hands the conversion to a detached thread. Waits until the copy has caught up to `at`.
+    void stop(long long at = -1) {
+        if (!active.load()) return;
+        stop_at.store(at >= 0 ? std::max(at, start_abs.load()) : store->end.load());
+        if (th.joinable()) th.join();
         std::string w, o, t;
         long long fr;
         {
             std::lock_guard<std::mutex> lk(m);
-            if (!f) return;
             active.store(false);
+            if (!f) return;
             fr = frames.load();
             const unsigned data = static_cast<unsigned>(fr * kChannels * 2);
             unsigned char b[4];
@@ -240,8 +387,12 @@ void worker_main(std::shared_ptr<Session> s) {
                 frames_buf.resize(whole * kChannels);
                 std::memcpy(frames_buf.data(), pending.data(), whole * frame_bytes);
                 pending.erase(pending.begin(), pending.begin() + static_cast<std::ptrdiff_t>(whole * frame_bytes));
-                if (!s->ring->write(s->gen, frames_buf.data(), whole)) { s->cancel.store(true); break; }
-                g_rec.write(frames_buf.data(), whole);
+                {
+                    std::lock_guard<std::mutex> sw(*s->switch_m);
+                    const long long abs = s->store->end.load();
+                    if (!s->store->write(s->store_gen, frames_buf.data(), whole)) { s->cancel.store(true); break; }
+                    if (!s->shifted->load() && !s->ring->write(s->gen, frames_buf.data(), whole, abs)) { s->cancel.store(true); break; }
+                }
                 if (!got_audio) {
                     got_audio = true;
                     failures_without_audio = 0;
@@ -336,6 +487,47 @@ void probe_main(std::shared_ptr<Session> s) {
 // ===========================================================================
 struct RadioEngine::Impl {
     std::shared_ptr<Ring> ring = std::make_shared<Ring>();
+    // --- timeshift (pause / rewind live radio) ---
+    std::shared_ptr<TimeshiftStore> store = std::make_shared<TimeshiftStore>();
+    std::shared_ptr<std::atomic<bool>> shifted = std::make_shared<std::atomic<bool>>(false);   // playing from the store
+    std::shared_ptr<std::mutex> switch_m = std::make_shared<std::mutex>();
+    std::atomic<bool> paused{false};
+    std::atomic<long long> feed_pos{0};        // next store frame the feeder copies into the ring
+    std::atomic<bool> feeder_quit{false};
+    std::atomic<int> edge_hits{0};             // the feeder had to skip ahead because the buffer's oldest audio was gone
+    std::thread feeder;
+    int timeshift_minutes = 30;
+    std::string timeshift_path;
+
+    // While shifted (and not paused): keeps ~3 s of store audio in the ring; when it has caught up with the stream it
+    // hands over to the live worker without a gap (under switch_m, so no chunk is missed or doubled).
+    void feeder_main() {
+        std::vector<float> buf(static_cast<size_t>(kRate / 4) * kChannels);
+        while (!feeder_quit.load()) {
+            if (!shifted->load() || paused.load() || ring->fill() >= static_cast<size_t>(kRate) * 3) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+                continue;
+            }
+            std::lock_guard<std::mutex> sw(*switch_m);
+            if (!shifted->load() || paused.load()) continue;
+            long long pos = feed_pos.load();
+            const long long margin = kRate * 2;   // never read where the writer is about to overwrite
+            if (pos < store->oldest() + margin && store->end.load() > store->cap) { pos = store->oldest() + margin; edge_hits.fetch_add(1); ring->clear(pos); }
+            const long long end = store->end.load();
+            const unsigned g = ring->current_gen();
+            if (pos >= end) {          // caught up: from now on the worker writes straight into the ring again
+                shifted->store(false);
+                continue;
+            }
+            // Copy at most a quarter second at a time; if the rest up to the live edge is short, copy it all and go live.
+            const size_t n = static_cast<size_t>(std::min<long long>(kRate / 4, end - pos));
+            const size_t got = store->read(pos, buf.data(), n);
+            if (got == 0) continue;
+            ring->write(g, buf.data(), got, pos);
+            feed_pos.store(pos + static_cast<long long>(got));
+            if (pos + static_cast<long long>(got) >= end) shifted->store(false);
+        }
+    }
     mutable std::mutex session_m;
     std::shared_ptr<Session> session;
 
@@ -384,10 +576,12 @@ struct RadioEngine::Impl {
         float* out = static_cast<float*>(output);
         size_t got = 0;
         const size_t want = frame_count;
-        if (!self->primed.load()) {
+        if (self->paused.load(std::memory_order_relaxed)) {
+            // Timeshift pause: nothing is taken from the ring (the stream keeps going into the store).
+        } else if (!self->primed.load()) {
             if (self->ring->fill() >= kPrebufferFrames) self->primed.store(true);
         }
-        if (self->primed.load()) {
+        if (self->primed.load() && !self->paused.load(std::memory_order_relaxed)) {
             got = self->ring->read(out, want);
             if (got < want) self->primed.store(false); // underrun: output silence, refill to the pre-buffer again
         }
@@ -514,10 +708,16 @@ struct RadioEngine::Impl {
     }
 };
 
-RadioEngine::RadioEngine() : impl_(new Impl) { impl_->mono.assign(8192, 0.0f); }
+RadioEngine::RadioEngine() : impl_(new Impl) {
+    impl_->mono.assign(8192, 0.0f);
+    impl_->feeder = std::thread([d = impl_.get()]() { d->feeder_main(); });
+}
 
 RadioEngine::~RadioEngine() {
     stop();
+    impl_->feeder_quit.store(true);
+    if (impl_->feeder.joinable()) impl_->feeder.join();
+    impl_->store->close_and_remove();   // the buffer file is only scratch space
     for (int i = 0; i < 1200 && g_rec.converting.load() > 0; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));   // let a running MP3 conversion finish
     if (impl_->device_ready) ma_device_uninit(&impl_->device);
     if (impl_->context_ready) ma_context_uninit(&impl_->context);
@@ -567,6 +767,9 @@ void RadioEngine::tune(const Station& st, int index) {
     s->station = st;
     s->index = index;
     s->ring = d.ring;
+    s->store = d.store;
+    s->shifted = d.shifted;
+    s->switch_m = d.switch_m;
     s->info.station = st.name;
     s->info.genre = st.genre;
     s->info.country = st.country;
@@ -574,14 +777,19 @@ void RadioEngine::tune(const Station& st, int index) {
     s->info.bitrate_kbps = st.bitrate_hint;
     s->info.host = st.synthetic() ? "ffmpeg lavfi (offline)" : host_of(st.url);
     if (st.synthetic()) { s->info.sample_rate = kRate; s->info.channels = (st.url == "lavfi:tone") ? 1 : 2; }
+    g_rec.stop(d.ring->heard_abs());   // a recording belongs to one station (finished before the buffer is reset)
     {
         std::lock_guard<std::mutex> lk(d.session_m);
         if (d.session) d.session->cancel.store(true);
+        std::lock_guard<std::mutex> sw(*d.switch_m);
         s->gen = d.ring->reset();      // from here on, the old worker's writes are refused
+        s->store_gen = d.store->reset();   // the timeshift buffer starts again with this station
+        d.shifted->store(false);
+        d.paused.store(false);
+        d.feed_pos.store(0);
         d.session = s;
     }
     d.primed.store(false);
-    g_rec.stop();                  // a recording belongs to one station
     if (d.noise_on.load()) { d.noise_hold.store(true); d.noise_restart.store(true); }
     d.meter_reset.store(true);
     d.scope.reset();
@@ -606,11 +814,17 @@ void RadioEngine::reconnect() {
 
 void RadioEngine::stop() {
     Impl& d = *impl_;
-    g_rec.stop();
+    g_rec.stop(d.ring->heard_abs());
     std::lock_guard<std::mutex> lk(d.session_m);
     if (d.session) d.session->cancel.store(true);
     d.session.reset();
-    d.ring->reset();
+    {
+        std::lock_guard<std::mutex> sw(*d.switch_m);
+        d.ring->reset();
+        d.store->reset();
+        d.shifted->store(false);
+        d.paused.store(false);
+    }
     d.primed.store(false);
     d.noise_hold.store(false);
     d.meter_reset.store(true);
@@ -619,15 +833,76 @@ void RadioEngine::stop() {
 void RadioEngine::set_tune_noise(bool on) { impl_->noise_on.store(on); if (!on) impl_->noise_hold.store(false); }
 void RadioEngine::set_fade(float g) { impl_->fade.store(std::clamp(g, 0.0f, 1.0f)); }
 void RadioEngine::set_volume(int pct) { impl_->volume.store(std::clamp(pct, 0, 100)); }
-bool RadioEngine::start_recording(const std::string& dir, const std::string& stem, const std::string& title, std::string* err) {
+bool RadioEngine::start_recording(const std::string& dir, const std::string& stem, const std::string& title,
+                                  long long from_frame, std::string* err) {
     {
         std::lock_guard<std::mutex> lk(impl_->session_m);
         if (!impl_->session) { if (err) *err = "nothing tuned"; return false; }
     }
     const std::filesystem::path base = std::filesystem::path(dir) / stem;
-    return g_rec.start(base.string() + ".wav", base.string() + ".mp3", title, err);
+    if (from_frame < 0) from_frame = impl_->ring->heard_abs();
+    return g_rec.start(impl_->store, from_frame, base.string() + ".wav", base.string() + ".mp3", title, err);
 }
-void RadioEngine::stop_recording() { g_rec.stop(); }
+void RadioEngine::stop_recording() { g_rec.stop(impl_->ring->heard_abs()); }
+
+// ---- timeshift ----------------------------------------------------------------------------------------------------
+void RadioEngine::set_timeshift(int minutes, const std::string& file) {
+    Impl& d = *impl_;
+    d.timeshift_minutes = std::clamp(minutes, 1, 120);
+    d.timeshift_path = file;
+    std::lock_guard<std::mutex> sw(*d.switch_m);
+    g_rec.stop(d.ring->heard_abs());
+    d.store->open(file, static_cast<long long>(d.timeshift_minutes) * 60 * kRate);
+    // a new (empty) buffer: whatever played so far is gone, so back to live
+    d.store->reset();
+    if (d.shifted->load()) { d.shifted->store(false); d.ring->clear(0); d.primed.store(false); }
+    d.paused.store(false);
+}
+
+void RadioEngine::toggle_pause() {
+    Impl& d = *impl_;
+    std::lock_guard<std::mutex> sw(*d.switch_m);
+    if (!d.paused.load()) {
+        // Pause: remember what was about to play and keep only the store running. On resume the feeder plays on from there.
+        const long long at = d.ring->heard_abs();
+        d.shifted->store(true);
+        d.feed_pos.store(at);
+        d.ring->clear(at);
+        d.paused.store(true);
+        d.primed.store(false);
+    } else {
+        d.paused.store(false);
+        d.primed.store(false);
+    }
+}
+
+double RadioEngine::jump(double seconds) {
+    Impl& d = *impl_;
+    std::lock_guard<std::mutex> sw(*d.switch_m);
+    const long long end = d.store->end.load();
+    const long long margin = kRate * 2;
+    const long long oldest = end > d.store->cap ? d.store->oldest() + margin : 0;
+    const long long heard = d.shifted->load() ? d.feed_pos.load() - static_cast<long long>(d.ring->fill()) : d.ring->heard_abs();
+    long long target = heard + static_cast<long long>(seconds * kRate);
+    target = std::clamp(target, oldest, end);
+    const double moved = static_cast<double>(target - heard) / kRate;
+    // Forward to (almost) the live edge: back to live, playing on from 1.5 s before the edge so there is no gap.
+    if (target >= end - kPrebufferFrames) target = std::max(oldest, end - static_cast<long long>(kPrebufferFrames));
+    d.shifted->store(true);
+    d.feed_pos.store(target);
+    d.ring->clear(target);
+    d.primed.store(false);
+    return moved;
+}
+
+void RadioEngine::go_live() {
+    Impl& d = *impl_;
+    {
+        std::lock_guard<std::mutex> sw(*d.switch_m);
+        d.paused.store(false);
+    }
+    jump(1e9);
+}
 
 void RadioEngine::set_muted(bool m) { impl_->muted.store(m); }
 void RadioEngine::set_stereo(bool on) {
@@ -654,7 +929,23 @@ RadioStatus RadioEngine::status() const {
     st.device_ok = d.device_ready;
     st.device_error = d.device_error;
     st.recording = g_rec.active.load();
-    st.recording_sec = static_cast<double>(g_rec.frames.load()) / kRate;
+    if (st.recording) st.recording_sec = static_cast<double>(std::max(0LL, d.store->end.load() - g_rec.start_abs.load())) / kRate;
+    // timeshift
+    st.timeshift_paused = d.paused.load();
+    st.timeshift_shifted = d.shifted->load() || st.timeshift_paused;
+    {
+        const long long end = d.store->end.load();
+        const long long heard = st.timeshift_shifted
+            ? (st.timeshift_paused ? d.feed_pos.load() : d.ring->heard_abs())
+            : end - static_cast<long long>(d.ring->fill());
+        st.heard_frame = d.ring->heard_abs();
+        if (st.timeshift_paused) st.heard_frame = d.feed_pos.load();
+        st.behind_sec = st.timeshift_shifted ? static_cast<double>(std::max(0LL, end - heard)) / kRate : 0.0;
+        st.buffered_sec = static_cast<double>(end - d.store->oldest()) / kRate;
+        st.timeshift_cap_sec = static_cast<double>(d.store->cap) / kRate;
+        st.timeshift_edge_hits = d.edge_hits.load();
+        st.oldest_frame = d.store->oldest();
+    }
     st.record_serial = g_rec.serial.load();
     if (st.record_serial > 0) { std::lock_guard<std::mutex> lk(g_rec.m); st.record_note = g_rec.note; }
     st.lufs = d.lufs.load();
@@ -672,7 +963,7 @@ RadioStatus RadioEngine::status() const {
     st.reconnects = s->reconnects.load();
     st.buffer_sec = static_cast<double>(d.ring->fill()) / kRate;
     const int raw = s->state.load();
-    if (raw == kReceiving) st.state = d.primed.load() ? StreamState::Live : StreamState::Buffering;
+    if (raw == kReceiving) st.state = (d.primed.load() || d.paused.load()) ? StreamState::Live : StreamState::Buffering;
     else st.state = static_cast<StreamState>(raw);
     const long long t0 = s->first_audio_ms.load();
     if (t0 > 0) st.listening_sec = static_cast<double>(now_ms() - t0) / 1000.0;

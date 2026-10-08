@@ -731,8 +731,12 @@ std::vector<std::string> build_tuner(const Style& s, const UiModel& m, const Rad
     const std::string lampc = s.onair_at(0.0f);
     std::string state_col = s.border;
     switch (st.state) {
-        case StreamState::Live:         lamp = blink ? "\u25CF" : "\u25CB"; state_txt = "LIVE " + fmt_hms(st.listening_sec); state_col = lampc; break;
-        case StreamState::Buffering:    lamp = "\u25D0"; state_txt = "BUFFERING"; break;
+        case StreamState::Live:
+        case StreamState::Buffering:
+            if (st.timeshift_paused) { lamp = "\u2016"; state_txt = "PAUSED -" + fmt_hms(st.behind_sec); state_col = lampc; break; }
+            if (st.timeshift_shifted && st.behind_sec >= 2.5) { lamp = "\u25D1"; state_txt = "TIMESHIFT -" + fmt_hms(st.behind_sec); state_col = lampc; break; }
+            if (st.state == StreamState::Buffering) { lamp = "\u25D0"; state_txt = "BUFFERING"; break; }
+            lamp = blink ? "\u25CF" : "\u25CB"; state_txt = "LIVE " + fmt_hms(st.listening_sec); state_col = lampc; break;
         case StreamState::Connecting:   lamp = "\u25CC"; state_txt = "CONNECTING"; break;
         case StreamState::Reconnecting: lamp = "\u21BB"; state_txt = "RECONNECTING"; break;
         case StreamState::Failed:       lamp = "\u2716"; state_txt = "OFFLINE"; break;
@@ -1681,7 +1685,8 @@ const CheatRow kCheatRows[] = {
     {nullptr, ".", "Switch the scope block between the oscilloscope and the sphere, like . in the player (rebindable)"},
     {nullptr, "SHIFT+o", "Oscilloscope overlay (display, style, frame rate, image protocol, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
     {nullptr, "SHIFT+z", "Sleep timer: 15 / 30 / 60 / 90 / 120 min, stops the stream (optionally with a fade-out of the volume)"},
-    {nullptr, "y", "Record the tuned stream (MP3, named by date and time, into the download folder); y again stops and saves"},
+    {nullptr, "y", "Record: opens the RECORD overlay (from now on = the moment y was pressed, the last 1 / 5 / 10 / 15 / 30 min, everything buffered); y again stops and saves the MP3"},
+    {nullptr, "UP/DOWN/ENTER", "Record overlay: choose the start / start recording (y does the same; ESC cancels)"},
     {nullptr, "h", "Open the LISTENING HISTORY: HISTORY / TOP CHANNELS / HABITS"},
     {nullptr, "SHIFT+l", "Open the big STATIONS overlay (the STATIONS pane with the whole screen)"},
     {nullptr, "s", "Open the RADIO SETTINGS (colours, switches, animation, paths, keys, about; saved to radio_config.txt)"},
@@ -1689,6 +1694,11 @@ const CheatRow kCheatRows[] = {
     {nullptr, "SHIFT+s", "Open the RADIO BROWSER menu: search stations worldwide (radio-browser.info)"},
     {nullptr, "SHIFT+p", "Open the STATION LISTS menu: build, save and load named station lists"},
     {nullptr, "+ / -", "Volume up / down (5 % steps)"},
+    // --- Timeshift ---
+    {"TIMESHIFT (MAIN UI, RADIO BUFFER 5-60 MIN)", "SPACE", "Pause / resume the station (the stream keeps buffering, you catch up later)"},
+    {nullptr, "[ / ]", "Jump back / forward 30 seconds (shown for 4 s at the bottom of the scope block)"},
+    {nullptr, "{", "Jump back 5 minutes"},
+    {nullptr, "}", "Back to live"},
     // --- Navigation ---
     {"NAVIGATION (MAIN UI)", "UP / DOWN", "Move the cursor in the STATIONS list"},
     {nullptr, "SHIFT+t", "Toggle the STATIONS sort: list order <-> name A-Z (also for the search results)"},
@@ -2371,6 +2381,7 @@ std::vector<std::string> build_settings(const RadioSettings& c, const SettingsMo
 constexpr int kOsciOverlayW = 44;
 constexpr int kNormOverlayW = 54;
 constexpr int kSleepOverlayW = 52;
+constexpr int kRecordOverlayW = 56;
 constexpr int kEqOverlayW = 58;
 constexpr int kSleepMinutes[5] = {15, 30, 60, 90, 120};
 
@@ -2385,14 +2396,42 @@ std::vector<std::string> build_overlay(const Style& s, const UiModel& m, const R
     const bool osci = m.overlay == 1;
     const bool sleep = m.overlay == 3;
     const bool eqo = m.overlay == 4;
-    const int W = eqo ? kEqOverlayW : sleep ? kSleepOverlayW : osci ? kOsciOverlayW : kNormOverlayW;
+    const bool rec = m.overlay == 5;
+    const int W = rec ? kRecordOverlayW : eqo ? kEqOverlayW : sleep ? kSleepOverlayW : osci ? kOsciOverlayW : kNormOverlayW;
     const int inner = W - 4;
     auto row = [&](const std::string& plain, bool hi, const std::string& ansi = "") {
         const std::string body = pad_right(truncate_str(plain, inner), inner);
         return box_line(s, (hi ? "\x1b[7m" : ansi) + body + kReset, s.border);
     };
     std::vector<std::string> lines;
-    if (eqo) {
+    if (rec) {
+        // Record (y): from the moment the overlay opened, or that much earlier out of the timeshift buffer.
+        auto clock = [](double sec) {
+            const long long t = std::max(0LL, static_cast<long long>(sec + 0.5));
+            char b[24];
+            if (t >= 3600) std::snprintf(b, sizeof b, "%lld:%02lld:%02lld", t / 3600, (t / 60) % 60, t % 60);
+            else std::snprintf(b, sizeof b, "%lld:%02lld", t / 60, t % 60);
+            return std::string(b);
+        };
+        lines.push_back(box_top(s, W, "Record", s.border));
+        const int n = static_cast<int>(sizeof(kRecordBack) / sizeof(kRecordBack[0]));
+        for (int i = 0; i < n; ++i) {
+            const int b = kRecordBack[i];
+            std::string label, note;
+            if (b == 0) { label = "From now on"; note = "(when this opened)"; }
+            else if (b < 0) { label = "Everything buffered"; note = clock(m.rec_avail_sec); }
+            else {
+                label = "The last " + std::to_string(b / 60) + (b == 60 ? " minute" : " minutes");
+                if (m.rec_avail_sec + 0.5 < b) note = "only " + clock(m.rec_avail_sec);
+            }
+            const bool on = i == m.overlay_row;
+            const std::string left = std::string(on ? "> " : "  ") + label;
+            lines.push_back(row(left + spaces(std::max(1, inner - display_width(left) - display_width(note))) + note, on));
+        }
+        lines.push_back(row("The recording runs until [y] is pressed again; it is", false, "\x1b[90m"));
+        lines.push_back(row("taken from the timeshift buffer (ON/OFF tab).", false, "\x1b[90m"));
+        lines.push_back(box_bottom(s, W, "[UP/DOWN] [ENTER/y] record  [ESC] cancel", s.border_bottom));
+    } else if (eqo) {
         // Same panel as the music player's (build_eq_panel): 13 rows of 2 dB, band values and names, status row, legends.
         const EqUi& u = m.eq;
         constexpr int kCell = 5;
@@ -2583,6 +2622,12 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     if (show_scope) scope = off_air ? build_satellite(s, m.t_sec, scope_w)
                           : cfg.scope_mode == 1 ? build_sphere(s, bars, m.dt, scope_w)
                                                 : build_scope(s, m, engine, false, scope_w);
+    if (show_scope && !m.scope_notice.empty() && !scope.empty()) {   // timeshift jumps: a note at the bottom of the scope block
+        const std::string t = truncate_str(m.scope_notice, std::max(1, scope_w - 2));
+        const int tw = display_width(t);
+        const int l = std::max(0, (scope_w - tw) / 2);
+        scope.back() = spaces(l) + s.header + t + kReset + spaces(std::max(0, scope_w - l - tw));
+    }
     for (int i = 0; i < kPanelH; ++i) {
         const size_t r = static_cast<size_t>(i);
         std::string body;
@@ -2611,7 +2656,7 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     }
     if (m.overlay != 0) {   // SHIFT+o / SHIFT+v overlay, centred over the finished screen
         const auto panel = build_overlay(s, m, st);
-        const int pw = m.overlay == 4 ? kEqOverlayW : m.overlay == 3 ? kSleepOverlayW : m.overlay == 1 ? kOsciOverlayW : kNormOverlayW;
+        const int pw = m.overlay == 5 ? kRecordOverlayW : m.overlay == 4 ? kEqOverlayW : m.overlay == 3 ? kSleepOverlayW : m.overlay == 1 ? kOsciOverlayW : kNormOverlayW;
         const int ph = static_cast<int>(panel.size());
         const int x = std::max(0, (W - pw) / 2);
         const int y = std::clamp((rows - ph) / 2 - 2, 0, std::max(0, rows - ph));
