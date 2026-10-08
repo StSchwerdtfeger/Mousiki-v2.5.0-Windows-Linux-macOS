@@ -230,6 +230,12 @@ LocalMusicPath=%USERPROFILE%\Music
 # playlists are listed, loaded, saved and deleted there. Editable live in
 # Settings -> PATH ("PLAYLIST PATH").
 #PlaylistsPath=C:\Users\YOUR NAME!!!!!!\Music\playlists
+
+# Playlist export folder (optional, ONE folder): where 'e' on the Saved
+# Playlists tab of the playlist editor writes M3U8 / M3U files. Unset means
+# the playlist folder itself. Editable live in Settings -> PATH
+# ("PLAYLIST EXPORT PATH").
+#PlaylistExportPath=C:\Users\YOUR NAME!!!!!!\Music\playlists\export
  
 # Download folder (optional, single -- not a list): where yt-dlp writes what
 # it downloads. Leaving it out means the built-in cache folder,
@@ -251,8 +257,8 @@ HKeySearch="/"
 HKeySearchOnline="/s:"
 HKeySeekForward="ARROW_KEY_RIGHT"
 HKeySeekBackward="ARROW_KEY_LEFT"
-HKeyIncreaseVolume="1"
-HKeyDecreaseVolume="2"
+HKeyIncreaseVolume="+"
+HKeyDecreaseVolume="-"
 HKeyAddHoveringSongToQueue="a"
 HKeyRemoveHoveringSongFromQueue="d"
 HKeySwitchBetweenCards="TAB"
@@ -266,8 +272,9 @@ HKeyMetaEditor="M"
 HKeyHistory="H"
 HKeyRetryLyrics="l"
 HKeyConsole="t"
-HKeyRefreshUi="k"
-HKeyToggleLyrics="+"
+HKeyRefreshUi="r"
+HKeyKaraoke="k"
+HKeyToggleLyrics="."
 HKeyCheatsheet="?"
 HKeyQueueMoveUp="4"
 HKeyPlaylist="P"
