@@ -155,17 +155,20 @@ ConsoleVerbosity=basic
 ##             AUTOSAVE / SESSION SNAPSHOT
 ##-------------------------------------------
  
+SleepFade=true
+## sleep timer: fade the volume out over the last 10 % of the time (30 s .. 10 min), then pause
+SidPlayLength=180
+## SID tunes (C64) are rendered by sidplayfp for this many seconds (10 .. 1800)
+KaraokeLyricsSize=2
+## karaoke overlay (k): lyrics size 1 (normal text) .. 5, SHIFT and + / SHIFT and - change it there
 AutoSave=true
-## resumes the exact song/position/queue/repeat/shuffle next launch.
-## Snapshot file (Windows): %USERPROFILE%\.cache\mousiki\snapshot\snapshot.json
+## resume exact song/position/queue/repeat/shuffle next launch
 AutoSaveIndicator=true
 AutoSaveDelayInSec=30
 AutoSaveChr=•
-## only the first character is used, even if you paste more than one
+## exactly one character is used, even if you paste more
 AutoSaveIndicatorType=blink
 ## blink , color
-## blink = the indicator character appears/disappears twice each time a save happens
-## color = the indicator stays visible and pulses AutoSaveC1 -> AutoSaveC2 -> AutoSaveC1 (heartbeat) each save
 AutoSaveC1=
 AutoSaveC2=
  
