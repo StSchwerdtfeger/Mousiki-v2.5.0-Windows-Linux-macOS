@@ -479,15 +479,27 @@ exec "$APP_HOME/app/mousiki" "$@"
 """
 
 
+# "lala" is a second name for the same launcher: both commands start the app.
+WIN_LALA_LAUNCHER = r"""@echo off
+rem "lala" = a second name for Mousiki: the same as mousiki.cmd.
+call "%~dp0mousiki.cmd" %*
+"""
+
+
 def write_launchers(stage, target):
     if target == "windows":
         write_text(stage / "mousiki.cmd", WIN_LAUNCHER, newline="\r\n")
+        write_text(stage / "lala.cmd", WIN_LALA_LAUNCHER, newline="\r\n")
         write_text(stage / "mousiki-wt.cmd", WIN_WT_LAUNCHER, newline="\r\n")
     else:
         extra = ""
         if target == "macos":     # GUI-less shells on macOS often lack Homebrew on PATH
             extra = '\nPATH="$PATH:/opt/homebrew/bin:/usr/local/bin"'
-        write_text(stage / "mousiki", UNIX_LAUNCHER.replace("@@EXTRA_PATH@@", extra), executable=True)
+        launcher = UNIX_LAUNCHER.replace("@@EXTRA_PATH@@", extra)
+        # The launcher finds the app relative to its own (symlink-resolved) location, so a plain copy under a
+        # second name works anywhere -- also in the portable .zip, which does not keep symlinks.
+        write_text(stage / "mousiki", launcher, executable=True)
+        write_text(stage / "lala", launcher, executable=True)
 
 
 # ---- bundled third-party tools ----------------------------------------------
@@ -639,16 +651,16 @@ Delete this file to use the regular user-profile locations instead.
 def portable_readme(target, version):
     head = "Mousiki %s - portable (%s)\n%s\n\n" % (version, target, "=" * 40)
     if target == "windows":
-        body = ("Unzip anywhere and run  mousiki-wt.cmd  (opens Windows Terminal) - or  mousiki.cmd  from a terminal.\n"
+        body = ("Unzip anywhere and run  mousiki-wt.cmd  (opens Windows Terminal) - or  mousiki.cmd  (or  lala.cmd)  from a terminal.\n"
                 "ffmpeg, yt-dlp and Python are included; nothing else has to be installed.\n"
                 "Use Windows Terminal, not the legacy console window.\n")
     elif target == "linux":
-        body = ("Unzip anywhere and run  ./mousiki  in a UTF-8 terminal.\n"
+        body = ("Unzip anywhere and run  ./mousiki  (or  ./lala)  in a UTF-8 terminal.\n"
                 "ffmpeg and yt-dlp are included. python3 must be installed (Ubuntu: 'sudo apt install python3').\n"
                 "Audio goes through PulseAudio/PipeWire-pulse or ALSA.\n"
-                "If the executable bit was lost on extraction:  chmod +x mousiki app/mousiki bin/* scripts/fpcalc\n")
+                "If the executable bit was lost on extraction:  chmod +x mousiki lala app/mousiki bin/* scripts/fpcalc\n")
     else:
-        body = ("Unzip anywhere and run  ./mousiki  in Terminal / iTerm.\n"
+        body = ("Unzip anywhere and run  ./mousiki  (or  ./lala)  in Terminal / iTerm.\n"
                 "yt-dlp is included. ffmpeg is NOT:  brew install ffmpeg\n"
                 "python3 comes with the Xcode Command Line Tools (xcode-select --install).\n"
                 "The binaries are not notarized. If macOS blocks them:  xattr -dr com.apple.quarantine <folder>\n")
@@ -771,7 +783,7 @@ CloseApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; Flags: unchecked
-Name: "addtopath"; Description: "Add Mousiki to &PATH (type 'mousiki' in any terminal)"
+Name: "addtopath"; Description: "Add Mousiki to &PATH (type 'mousiki' or 'lala' in any terminal)"
 
 [Files]
 Source: "%(stage)s\*"; DestDir: "{app}"; Excludes: "portable.txt,data\*"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -997,6 +1009,7 @@ def build_deb(stage, ws, dist, version):
     shutil.copytree(str(stage), str(opt), symlinks=True)
     (root / "usr" / "bin").mkdir(parents=True)
     os.symlink("/opt/mousiki/mousiki", str(root / "usr" / "bin" / "mousiki"))
+    os.symlink("/opt/mousiki/lala", str(root / "usr" / "bin" / "lala"))          # second command name
     write_text(root / "usr" / "share" / "applications" / "mousiki.desktop", DEB_DESKTOP)
     doc = root / "usr" / "share" / "doc" / "mousiki"
     doc.mkdir(parents=True)
@@ -1099,7 +1112,7 @@ echo "Your settings in ~/.config/mousiki are kept."
 printf "Continue? [y/N] "
 read ans
 case "$ans" in y|Y) ;; *) echo "Cancelled."; exit 0 ;; esac
-sudo rm -rf /usr/local/lib/mousiki /usr/local/bin/mousiki /Applications/Mousiki
+sudo rm -rf /usr/local/lib/mousiki /usr/local/bin/mousiki /usr/local/bin/lala /Applications/Mousiki
 sudo pkgutil --forget io.github.mousiki.player >/dev/null 2>&1
 echo "Mousiki was removed."
 """
@@ -1113,6 +1126,7 @@ def build_mac_pkgroot(stage, root):
     shutil.copytree(str(stage), str(lib), symlinks=True)
     (root / "usr" / "local" / "bin").mkdir(parents=True)
     os.symlink("../lib/mousiki/mousiki", str(root / "usr" / "local" / "bin" / "mousiki"))
+    os.symlink("../lib/mousiki/lala", str(root / "usr" / "local" / "bin" / "lala"))   # second command name
     apps = root / "Applications" / "Mousiki"
     apps.mkdir(parents=True)
     write_text(apps / "Mousiki.command", MAC_COMMAND, executable=True)
