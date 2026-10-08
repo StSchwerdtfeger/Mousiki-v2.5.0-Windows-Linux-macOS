@@ -313,12 +313,12 @@ Zero external UI bloat. Mousiki is designed around a fast,
 focused TUI with no unnecessary interface layers. A terminal 
 music player built for people who prefer control.
  
-Devloper : ender                         Github   : itzender5820
-Email    : itz.ender5820@gmail.com
-Version  : original and final v1.0       Licence  : Apache licence 2.0
+Developer : ender                         Github   : itzender5820
+Email     : itz.ender5820@gmail.com
+Version   : original and final v1.0       Licence  : Apache licence 2.0
  
-Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Version      : v3.0.0                    Licence  : Apache licence 2.0
+Windows Port / Modification : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
+Version                     : v3.0.0                    Licence  : Apache licence 2.0
  
 Adjusted to also run on Windows. Several features and modifications were
 added, the general design remained. Additions: radio mode, playlist menu, 
