@@ -108,7 +108,7 @@ struct BrowseModel {
 };
 
 // ---- STATION LISTS menu (Shift+P) ---------------------------------------------------------------------
-// Laid out like the player's playlist editor, two tabs (ALT+Left/Right):
+// Laid out like the player's playlist editor, two tabs (Left/Right -- see `typing` below -- or ALT+Left/Right):
 //   1: CREATE / EDIT      name field | SEARCH ALL STATIONS | STATIONS (library) beside LIST CONTENTS (what is being built)
 //   2: SAVED STATION LISTS  SEARCH STATION LISTS | STATION LISTS (ENTER loads the hovered one into tab 1)
 // TAB cycles the panes of the current tab.
@@ -120,7 +120,7 @@ struct ListMenuModel {
     int tab = 0;                          // 0 = CREATE / EDIT, 1 = SAVED STATION LISTS
     // --- tab 1: the list being built
     ListFocus focus = ListFocus::Name;
-    std::string name;                     // the list's name (what [s] / HOME saves it under)
+    std::string name;                     // the list's name (what CTRL+s saves it under)
     EditState name_edit;
     std::vector<int> items;               // stations of the list being built, in the order they were added
     int item_cursor = 0;
@@ -130,6 +130,9 @@ struct ListMenuModel {
     int cursor = 0;                       // position within `visible`
     bool sort_az = false;                 // SHIFT+t in STATIONS: false = list order (as added to stations.txt), true = name A-Z
     bool dirty = false;                   // unsaved changes in tab 1 (ESC asks first)
+    // The focused text box (name / search, either tab) is IN USE once something was typed or edited in it: from then
+    // on Left/Right move its caret; before that -- and again after ESC / TAB / ENTER -- they switch the tab.
+    bool typing = false;
     // --- tab 2: the saved lists
     ListManageFocus mfocus = ListManageFocus::List;
     std::string msearch;

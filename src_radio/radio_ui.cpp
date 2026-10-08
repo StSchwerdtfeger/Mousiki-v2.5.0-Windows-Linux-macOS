@@ -1408,8 +1408,15 @@ std::vector<std::string> build_lists_menu(const Style& s, const UiModel& m, cons
         out.push_back(seg_line({{"\x1b[41;97m", " Delete station list \"" + nm + "\"? This can't be undone.   [Y]es   [N]o   [ESC] cancel "}}, W));
         out.push_back(spaces(W));
     } else {
-        out.push_back(seg_line({{s.legend, "[" MUISC_ALT_NAME "+←→] Switch Tab | [TAB] Focus | [↑↓] Navi. | [ENTER] Add/Load | [DEL] Remove | [4/5] Move ↑↓ | [s/HOME] Save"}}, W));
-        out.push_back(seg_line({{s.legend, "[SHIFT+t] Sort | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [/] Search | [?] Cheatsheet | [ESC] Clear / Exit"}}, W));
+        // Left/Right and ESC say what they do right now: in a text box that was typed into they move the caret /
+        // leave the box, everywhere else they switch the tab / clear the search or close the menu.
+        const bool box = lm.tab == 0 ? (lm.focus == ListFocus::Name || lm.focus == ListFocus::Search)
+                                     : lm.mfocus == ListManageFocus::Search;
+        const bool in_text = box && lm.typing;
+        out.push_back(seg_line({{s.legend, std::string(in_text ? "[←→] Cursor" : "[←→] Switch Tab")
+                                           + " | [TAB] Focus | [↑↓] Navi. | [ENTER] Add/Load | [DEL] Remove | [4/5] Move ↑↓ | [CTRL+s] Save"}}, W));
+        out.push_back(seg_line({{s.legend, std::string("[SHIFT+t] Sort | [SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [/] Search | [?] Cheatsheet | ")
+                                           + (in_text ? "[ESC] Leave field" : "[ESC] Clear / Exit")}}, W));
     }
     out.push_back(seg_line({{s.header, lm.flash}}, W));
     while (static_cast<int>(out.size()) < rows) out.push_back(spaces(W));
@@ -1671,7 +1678,7 @@ const CheatRow kCheatRows[] = {
     {nullptr, "</>/UP/DOWN", "Equalizer: select band (LEFT / RIGHT) / gain +1 / -1 dB"},
     {nullptr, ",/./TAB/0/R", "Equalizer: previous / next preset / zero the band / reset to Flat (SPACE on/off)"},
     {nullptr, "S/DEL/X", "Equalizer: save the curve as a custom preset (ENTER saves, ESC cancels) / delete the selected one (press twice)"},
-    {nullptr, "o", "Switch the scope block between the oscilloscope and the sphere (rebindable; + is the volume key)"},
+    {nullptr, ".", "Switch the scope block between the oscilloscope and the sphere, like . in the player (rebindable)"},
     {nullptr, "SHIFT+o", "Oscilloscope overlay (display, style, frame rate, image protocol, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
     {nullptr, "SHIFT+z", "Sleep timer: 15 / 30 / 60 / 90 / 120 min, stops the stream (optionally with a fade-out of the volume)"},
     {nullptr, "y", "Record the tuned stream (MP3, named by date and time, into the download folder); y again stops and saves"},
@@ -1715,17 +1722,18 @@ const CheatRow kCheatRows[] = {
     {nullptr, "ESC", "Clear the search / close the menu"},
     {nullptr, "?", "This cheatsheet (not while typing in the search box)"},
     {nullptr, "CTRL+C", "Quit (in the search box it copies instead)"},
-    {"STATION LISTS MENU (SHIFT+p)", "ALT+LEFT/RIGHT", "Switch tab: CREATE / EDIT <-> SAVED STATION LISTS (from every pane)"},
+    {"STATION LISTS MENU (SHIFT+p)", "LEFT/RIGHT", "Switch tab: CREATE / EDIT <-> SAVED STATION LISTS; in a name / search box after typing: move the caret"},
+    {nullptr, MUISC_ALT_NAME_UC "+LEFT/RIGHT", "Switch tab from every pane, also while typing"},
     {nullptr, "TAB", "Cycle focus. Tab 1: name, search, STATIONS, LIST CONTENTS. Tab 2: search, list"},
     {nullptr, "ENTER", "Name: on to the search / search, STATIONS: add hovered station / LIST CONTENTS: tune it"},
     {nullptr, "ENTER", "Tab 2: search -> the list / STATION LISTS: load the hovered list into tab 1"},
-    {nullptr, "S / HOME", "Save the list under its name (S: not while typing; HOME: anywhere). Same name overwrites"},
+    {nullptr, "CTRL+s", "Save the list under its name (from every pane of tab 1). Same name overwrites"},
     {nullptr, "SHIFT+t", "STATIONS: toggle the sort, list order <-> name A-Z (also for the search results)"},
     {nullptr, "DEL / BACKSPACE / D", "LIST CONTENTS: remove the hovered station from the list"},
     {nullptr, "4 / 5", "LIST CONTENTS: move the hovered station up / down"},
     {nullptr, "DEL", "Tab 2, STATION LISTS: delete the hovered list (asks first)"},
     {nullptr, "/", "Back to the search box of the tab (not while typing)"},
-    {nullptr, "ESC", "Search with text: clear it. Else close the menu (unsaved changes: asks Y / N / ESC)"},
+    {nullptr, "ESC", "Leave the box you typed in (LEFT/RIGHT switch tabs again). Then: a search with text is cleared, else the menu closes (unsaved changes: asks Y / N / ESC)"},
     {nullptr, "J / K", "Move the cursor down / up in a list pane"},
     {"BIG STATIONS OVERLAY (SHIFT+l)", "/", "Search like in the main screen (typo tolerant; p: searches the station lists, ENTER opens one and tunes its first station, s: back to stations)"},
     {nullptr, "UP / DOWN", "Move the cursor; ENTER tunes the hovered station; n / b / # / p / x / + / - work as in the main screen"},
@@ -1765,8 +1773,9 @@ const CheatRow kCheatRows[] = {
     {nullptr, "ENTER / ESC", "Name box: confirm / cancel"},
     {"RADIO SETTINGS (s)", "TAB", "Next tab: COLORS / ON/OFF / ANIMATION / PATHS / REFERENCE / ABOUT APP"},
     {nullptr, "UP / DOWN", "Move through the rows (LEFT / RIGHT or ENTER change a switch; ENTER edits a colour, a folder or a key)"},
-    {nullptr, "s", "Save radio_config.txt (also saved when you leave the screen)"},
-    {nullptr, "ESC / q", "Back to the radio"},
+    {nullptr, "LEFT / RIGHT (editing)", "Move the caret in the colour, folder or key being edited; TAB and the arrows stay in the field until ENTER (apply) or ESC (cancel)"},
+    {nullptr, "s", "Save radio_config.txt and close"},
+    {nullptr, "ESC / q", "Discard the changes made on the screen and close"},
     {nullptr, "ON/OFF: TUNING NOISE", "Radio static that fades in when you tune another station and fades out when the stream plays"},
     {nullptr, "REFERENCE: ENTER", "Change the key of the hovered command; a key that is already taken is refused with the name of its owner"},
     {nullptr, "REFERENCE: DEL", "Restore the default key of the hovered command"},
@@ -2316,8 +2325,10 @@ std::vector<std::string> build_settings(const RadioSettings& c, const SettingsMo
                 segs.push_back({"", ": "});
                 const std::string v = cellv(r, col);
                 const bool sel = sm.row == r && sm.col == col;
-                if (sel && sm.editing)   // digits only, so a plain red field with a trailing "_" as the caret is enough
-                    segs.push_back({"\x1b[41;37m", pad_right(utf8_take(sm.buffer, 4) + "_", 5)});
+                if (sel && sm.editing) {   // caret and marked range, like the path and key fields
+                    const EditPaint p = paint_edit_field(sm.buffer, sm.edit, 4, "\x1b[41;37m", true);
+                    segs.push_back({"\x1b[41;37m", p.s + spaces(std::max(0, 5 - p.cols))});
+                }
                 else
                     segs.push_back({sel ? "\x1b[7m" : "", pad_right(v, 5)});
                 const bool is_bg = (col == 1) && spec.label2 && std::string(spec.label2) == "BG";
@@ -2340,16 +2351,16 @@ std::vector<std::string> build_settings(const RadioSettings& c, const SettingsMo
     while (static_cast<int>(out.size()) < body_end) line({});
     out.push_back(bar(H - 3) + "└" + repeat(Hz, std::max(0, W - 2)) + "┘" + kReset);
     std::string hint;
-    if (sm.tab == 4 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type one key (or SPACE / TAB / BACKSPACE)";
+    if (sm.tab == 4 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | [\u2190\u2192] Cursor | type one key (or SPACE / TAB / BACKSPACE)";
     else if (sm.tab == 4) hint = "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save | [ESC/q] Discard";
     else if (sm.tab == 5) hint = "[TAB] Switch | [\u2191\u2193] Scroll | [ESC/q] Back";
-    else if (sm.tab == 3 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type or paste a folder (empty = default)";
+    else if (sm.tab == 3 && sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | [\u2190\u2192] Cursor | type or paste a folder (empty = default)";
     else if (sm.tab == 3) hint = "[TAB] Switch | [↑↓] Navigate | [ENTER] Edit / toggle | [s] Save | [ESC/q] Discard";
     else if (sm.tab >= 1) hint = "[TAB] Switch | [↑↓] Navigate | [←→/ENTER] Change | [s] Save | [ESC/q] Discard";
-    else if (sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | type a palette number 0-255 (empty or 0 = terminal colour)";
+    else if (sm.editing) hint = "[ENTER] Apply | [ESC] Cancel | [\u2190\u2192] Cursor | type a palette number 0-255 (empty or 0 = terminal colour)";
     else hint = "[TAB] Switch | [↑↓←→] Navigate | [ENTER] Edit | [s] Save | [ESC/q] Discard";
     out.push_back(seg_line({{legend, hint}}, W));
-    out.push_back(seg_line({{"\x1b[32m", utf8_take(sm.status.empty() && sm.dirty ? std::string("* unsaved changes (saved with S or when you leave)") : sm.status, W)}}, W));
+    out.push_back(seg_line({{"\x1b[32m", utf8_take(sm.status.empty() && sm.dirty ? std::string("Unsaved changes! Save with `s` or discard with `ESC`.") : sm.status, W)}}, W));
     return out;
 }
 

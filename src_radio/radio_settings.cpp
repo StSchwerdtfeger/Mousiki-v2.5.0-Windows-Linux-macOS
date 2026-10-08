@@ -419,7 +419,7 @@ const KeyAction kKeyActions[] = {
     {nullptr, "OsciMenu", "Oscilloscope Overlay", "O"},
     {nullptr, "NormMenu", "Normalization Overlay", "V"},
     {nullptr, "EqMenu", "Equalizer Overlay", "E"},
-    {nullptr, "ScopeToggle", "Switch Osci / Sphere", "o"},
+    {nullptr, "ScopeToggle", "Switch Osci / Sphere", "."},   // "." like the player's lyrics-area cycle (was "o" up to v3.0.0)
     {"SYSTEM", "Settings", "Open Settings", "s"},
     {nullptr, "Cheatsheet", "Cheatsheet", "?"},
     {nullptr, "Quit", "Quit Application", "q"},

@@ -11,7 +11,7 @@ namespace muisc::radio {
 
 namespace {
 
-const char* const kUserAgent = "Mousiki-Radio/3.0 (terminal music player; https://radio-browser.info client)";
+const char* const kUserAgent = "Mousiki-Radio/2.5 (terminal music player; https://radio-browser.info client)";
 const char* const kServers[] = {"de1.api.radio-browser.info", "all.api.radio-browser.info",
                                 "nl1.api.radio-browser.info", "at1.api.radio-browser.info"};
 

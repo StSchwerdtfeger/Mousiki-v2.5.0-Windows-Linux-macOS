@@ -829,7 +829,7 @@ int radio_main(int argc, char** argv) {
         ListMenuModel& lm = ui.model.lmenu;
         // Like the player: opening always starts a fresh, empty list on tab 1 with the name field focused
         // (an existing list comes back only explicitly, tab 2 -> ENTER; ESC asks before dropping unsaved work).
-        lm.open = true; lm.tab = 0; lm.focus = ListFocus::Name;
+        lm.open = true; lm.tab = 0; lm.focus = ListFocus::Name; lm.typing = false;
         lm.name.clear(); lm.name_edit.reset();
         lm.items.clear(); lm.item_cursor = 0;
         lm.search.clear(); lm.search_edit.reset(); lm.cursor = 0;
@@ -848,6 +848,7 @@ int radio_main(int argc, char** argv) {
     auto lm_focus = [&](ListFocus f) {
         ListMenuModel& lm = ui.model.lmenu;
         lm.focus = f;
+        lm.typing = false;
         if (f == ListFocus::Name) lm.name_edit.to_end(lm.name);
         if (f == ListFocus::Search) lm.search_edit.to_end(lm.search);
         lm_sync_entry();
@@ -855,10 +856,11 @@ int radio_main(int argc, char** argv) {
     auto lm_mfocus = [&](ListManageFocus f) {
         ListMenuModel& lm = ui.model.lmenu;
         lm.mfocus = f;
+        lm.typing = false;
         if (f == ListManageFocus::Search) lm.msearch_edit.to_end(lm.msearch);
         lm_sync_entry();
     };
-    // [s] / HOME. Saves under the typed name and STAYS in the menu (like the player); only the "Save changes ... before
+    // CTRL+s. Saves under the typed name and STAYS in the menu (like the player); only the "Save changes ... before
     // exiting?" prompt saves AND leaves. An empty name is refused and focuses the name field.
     auto lm_save = [&](bool leave) {
         ListMenuModel& lm = ui.model.lmenu;
@@ -995,7 +997,6 @@ int radio_main(int argc, char** argv) {
         }
         int k;
         while ((k = term.poll_key()) != 0) {
-            if (k == kKeyCtrlShiftM) { switch_mode = true; running = false; break; }   // Ctrl+Shift+M: back to the music player
             const bool arrow = last_key_was_arrow();
             const int nvis = static_cast<int>(ui.model.visible.size());
             // ------------------------------------------------------------------ CHEATSHEET (?)
@@ -1073,9 +1074,11 @@ int radio_main(int argc, char** argv) {
                         sm.editing = false; set_text_entry(false);
                         continue;
                     }
-                    if ((k == 127 || k == 8) && !sm.buffer.empty()) sm.buffer.pop_back();
-                    else if (k == kKeyDelete) sm.buffer.clear();
-                    else if (k >= '0' && k <= '9' && sm.buffer.size() < 3) sm.buffer += static_cast<char>(k);
+                    // Same caret keys as every other field (LEFT/RIGHT move it, SHIFT+LEFT/RIGHT mark, HOME/END,
+                    // DEL / BACKSPACE, CTRL+C/X/V). TAB and the arrows never leave the field: only ENTER or ESC
+                    // do. Typing is digits only (a palette number); a pasted non-number is refused by ENTER.
+                    if (textedit_detail::is_text_key(k) && !arrow && !(k >= '0' && k <= '9')) continue;
+                    edit_text_key(sm.buffer, sm.edit, k, 3, &sm.status);
                     continue;
                 }
                 if (k == 3 || k == kKeyCtrlC) { settings_close(false); running = false; continue; }
@@ -1381,7 +1384,8 @@ int radio_main(int argc, char** argv) {
                 }
                 const bool in_text = lm_in_text();
                 if ((k == 3 || k == kKeyCtrlC) && !in_text) { running = false; continue; }   // in a text field Ctrl+C copies
-                if (k == 27) {                                    // ESC: clear a search with text, else leave (asking if unsaved)
+                if (k == 27) {                                    // ESC: leave a field typed in, clear a search with text, else leave (asking if unsaved)
+                    if (in_text && lm.typing) { lm.typing = false; continue; }   // Left/Right switch tabs again; the text stays
                     if (lm.tab == 0 && lm.focus == ListFocus::Search && !lm.search.empty()) {
                         lm.search.clear(); lm.search_edit.reset(); lm.cursor = 0; ui.refilter_lists_stations();
                     } else if (lm.tab == 1 && lm.mfocus == ListManageFocus::Search && !lm.msearch.empty()) {
@@ -1390,13 +1394,23 @@ int radio_main(int argc, char** argv) {
                     else lm_close();
                     continue;
                 }
-                if (k == kKeyHome) { if (lm.tab == 0) lm_save(false); continue; }   // HOME saves from every pane (never typed text)
-                if (k == kKeyAltLeft || k == kKeyAltRight) {                       // ALT+Left/Right: switch tab
+                if (k == kKeyCtrlS) {                             // CTRL+s saves from every pane of tab 1
+                    if (lm.tab == 0) lm_save(false);
+                    else lm.flash = "switch to CREATE / EDIT (\u2190\u2192) to save a list";
+                    continue;
+                }
+                // Tab switch: plain Left/Right -- except in a text box that is in use (typed / edited in), where they move
+                // the caret until ESC, TAB or ENTER. ALT+Left/Right switches from everywhere.
+                if (k == kKeyAltLeft || k == kKeyAltRight || (arrow && (k == 'C' || k == 'D') && !(in_text && lm.typing))) {
                     lm.tab = 1 - lm.tab;
+                    lm.typing = false;
                     if (lm.tab == 1) ui.refilter_saved_lists();
                     lm_sync_entry();
                     continue;
                 }
+                // Any other key that reaches a text box below (typing, BACKSPACE / DEL, HOME / END, marking,
+                // the clipboard) puts it in use. Up/Down walk the list below the box, ENTER / TAB leave it.
+                if (in_text && !(arrow && (k == 'A' || k == 'B')) && k != 13 && k != 10 && k != 9) lm.typing = true;
                 if (lm.tab == 1) {
                     // --- tab 2: SAVED STATION LISTS
                     if (k == 9) { lm_mfocus(lm.mfocus == ListManageFocus::Search ? ListManageFocus::List : ListManageFocus::Search); continue; }
@@ -1475,7 +1489,6 @@ int radio_main(int argc, char** argv) {
                     if (k == '5') { lm_move(+1); continue; }
                 }
                 // keys shared by STATIONS and LIST CONTENTS (never reached from a text field)
-                if (k == 's') { lm_save(false); continue; }
                 if (k == '/') { lm_focus(ListFocus::Search); continue; }
                 if (k == '?') { ui.model.cheat_open = true; ui.model.cheat_scroll = 0; continue; }
                 continue;
@@ -1806,7 +1819,7 @@ int radio_main(int argc, char** argv) {
                 case 'x': engine.stop(); break;
                 case 's': settings_open(); break;      // the RADIO SETTINGS screen
                 case 'L': ui.model.stov = StationsOverlay{}; ui.model.stov.open = true; break;   // the big STATIONS overlay
-                case 'o':                              // switch the scope block between the oscilloscope and the sphere
+                case '.':                              // switch the scope block between the oscilloscope and the sphere
                     cfg.scope_mode = cfg.scope_mode == 1 ? 0 : 1;
                     ui.model.settings.dirty = true;
                     ui.model.notice = cfg.scope_mode == 1 ? "sphere" : "oscilloscope"; notice_until = ui.model.t_sec + 2;

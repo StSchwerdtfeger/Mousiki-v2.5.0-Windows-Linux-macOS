@@ -1,5 +1,5 @@
 // Stand-alone radio executable (mousiki_radio, optional CMake target MOUSIKI_BUILD_RADIO_STANDALONE): development and
-// tests. In the normal program the radio is started by main() (src/main.cpp) and Ctrl+Shift+M leaves it for the player.
+// tests. In the normal program the radio is started by main() (src/main.cpp) and SHIFT and + (the '*' key) leaves it for the player.
 #include <clocale>
 #include <iostream>
 #include <string>
