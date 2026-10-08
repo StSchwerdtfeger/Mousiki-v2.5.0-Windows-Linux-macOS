@@ -72,6 +72,13 @@ struct HistoryArchiveTitle {
     double len_sec = 0.0;
     int plays = 0;
     double listened_sec = 0.0;
+    // For the smart lists (ADD SMART HISTORY TO QUEUE): plays per calendar day
+    // ("YYYY-MM-DD" -> count; "top of the week / month / ...") and per time of
+    // day (history_tod_bucket()). Only filled for plays folded by v3.0.1+ --
+    // older archives simply have no dates, so those plays count for the
+    // all-time lists only.
+    std::map<std::string, int> day_plays;
+    std::array<int, 4> tod{};
 };
 
 struct HistoryArchive {
@@ -151,6 +158,18 @@ private:
 std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bool most_first,
                                        const HistoryArchive* archive = nullptr);
 HistoryStats history_stats(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive = nullptr);
+
+// --- Smart lists (the history overlay's ADD SMART HISTORY TO QUEUE pane) ---
+// Time of day of a play start: 0 = morning (7-11), 1 = day (11-18),
+// 2 = evening (18-22), 3 = night (22-7). -1 for an unknown start time.
+int history_tod_bucket(long long unix_sec);
+// Like history_top(), but only plays that started at or after `since` (unix
+// seconds; archived plays count by their calendar day).
+std::vector<HistoryTopRow> history_top_since(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive,
+                                             long long since, bool most_first);
+// Like history_top(), but only plays that started in time-of-day bucket `tod`.
+std::vector<HistoryTopRow> history_top_tod(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive,
+                                           int tod, bool most_first);
 
 // The key a play is recorded and aggregated under: a local file's path, or
 // "yt:<video id>" for a stream (so the same track reached two ways counts

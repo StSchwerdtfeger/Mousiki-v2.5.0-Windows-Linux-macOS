@@ -97,6 +97,17 @@ Value archive_to_json(const HistoryArchive& a) {
         t.set("len", Value::make_num(kv.second.len_sec));
         t.set("n", Value::make_num(kv.second.plays));
         t.set("heard", Value::make_num(kv.second.listened_sec));
+        if (!kv.second.day_plays.empty()) {
+            Value d = Value::make_obj();
+            for (const auto& dk : kv.second.day_plays) d.set(dk.first, Value::make_num(dk.second));
+            t.set("days", d);
+        }
+        const auto& tod = kv.second.tod;
+        if (tod[0] || tod[1] || tod[2] || tod[3]) {
+            Value a4 = Value::make_arr();
+            for (int x : tod) a4.arr.push_back(Value::make_num(x));
+            t.set("tod", a4);
+        }
         titles.arr.push_back(t);
     }
     v.set("titles", titles);
@@ -134,6 +145,12 @@ void archive_from_json(const Value& v, HistoryArchive& a) {
                 if (auto* y = item.find("len")) t.len_sec = y->as_number(0.0);
                 if (auto* y = item.find("n")) t.plays = static_cast<int>(y->as_number(0.0));
                 if (auto* y = item.find("heard")) t.listened_sec = y->as_number(0.0);
+                if (auto* y = item.find("days"))
+                    if (y->type == Type::Object)
+                        for (const auto& dk : y->obj) t.day_plays[dk.first] = static_cast<int>(dk.second.as_number(0.0));
+                if (auto* y = item.find("tod"))
+                    if (y->type == Type::Array)
+                        for (size_t i = 0; i < 4 && i < y->arr.size(); ++i) t.tod[i] = static_cast<int>(y->arr[i].as_number(0.0));
                 a.titles[id->as_string()] = t;
             }
         }
@@ -186,6 +203,11 @@ void HistoryArchive::fold(const HistoryPlay& p) {
         if (p.len_sec > 0) t.len_sec = p.len_sec;
         ++t.plays;
         t.listened_sec += p.listened_sec;
+        if (p.started_at > 0) {
+            ++t.day_plays[day_key(p.started_at)];
+            const int b = history_tod_bucket(p.started_at);
+            if (b >= 0) ++t.tod[static_cast<size_t>(b)];
+        }
     }
     add_time_buckets(p, hours, weekdays);
     if (p.started_at > 0) {
@@ -393,6 +415,88 @@ std::vector<HistoryTopRow> history_top(const std::vector<HistoryPlay>& plays, bo
         return a.title < b.title;
     });
     return rows;
+}
+
+// ---------------------------------------------------------------------------
+// Smart lists
+// ---------------------------------------------------------------------------
+
+int history_tod_bucket(long long unix_sec) {
+    if (unix_sec <= 0) return -1;
+    const int h = local_tm(unix_sec).tm_hour;
+    if (h >= 7 && h < 11) return 0;    // morning
+    if (h >= 11 && h < 18) return 1;   // day
+    if (h >= 18 && h < 22) return 2;   // evening
+    return 3;                          // night, 22-7
+}
+
+namespace {
+
+// history_top() with a filter: `keep` decides for each play of the window,
+// `archived` returns how many of a title's archived plays count (0 = none).
+template <class KeepPlay, class ArchivedCount>
+std::vector<HistoryTopRow> top_filtered(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive,
+                                        bool most_first, KeepPlay keep, ArchivedCount archived) {
+    std::vector<HistoryTopRow> rows;
+    std::map<std::string, size_t> by_id;
+    auto row_for = [&](const std::string& id) -> HistoryTopRow& {
+        auto it = by_id.find(id);
+        if (it != by_id.end()) return rows[it->second];
+        by_id[id] = rows.size();
+        rows.push_back(HistoryTopRow{});
+        rows.back().id = id;
+        return rows.back();
+    };
+    for (const HistoryPlay& p : plays) {   // newest first: the newest name / artist wins
+        if (p.id.empty() || !keep(p)) continue;
+        HistoryTopRow& r = row_for(p.id);
+        ++r.plays;
+        r.listened_sec += p.listened_sec;
+        if (r.title.empty()) r.title = p.title;
+        if (r.artist.empty()) r.artist = p.artist;
+        if (r.len_sec <= 0) r.len_sec = p.len_sec;
+    }
+    if (archive) {
+        for (const auto& kv : archive->titles) {
+            const int n = archived(kv.second);
+            if (n <= 0) continue;
+            HistoryTopRow& r = row_for(kv.first);
+            r.plays += n;
+            if (kv.second.plays > 0) r.listened_sec += kv.second.listened_sec * n / kv.second.plays;
+            if (r.title.empty()) r.title = kv.second.title;
+            if (r.artist.empty()) r.artist = kv.second.artist;
+            if (r.len_sec <= 0) r.len_sec = kv.second.len_sec;
+        }
+    }
+    std::sort(rows.begin(), rows.end(), [most_first](const HistoryTopRow& a, const HistoryTopRow& b) {
+        if (a.plays != b.plays) return most_first ? a.plays > b.plays : a.plays < b.plays;
+        if (a.listened_sec != b.listened_sec) return most_first ? a.listened_sec > b.listened_sec
+                                                                : a.listened_sec < b.listened_sec;
+        return a.title < b.title;
+    });
+    return rows;
+}
+
+} // namespace
+
+std::vector<HistoryTopRow> history_top_since(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive,
+                                             long long since, bool most_first) {
+    const std::string first_day = day_key(since);
+    return top_filtered(plays, archive, most_first,
+        [since](const HistoryPlay& p) { return p.started_at >= since; },
+        [&first_day](const HistoryArchiveTitle& t) {
+            int n = 0;
+            for (auto it = t.day_plays.lower_bound(first_day); it != t.day_plays.end(); ++it) n += it->second;
+            return n;
+        });
+}
+
+std::vector<HistoryTopRow> history_top_tod(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive,
+                                           int tod, bool most_first) {
+    if (tod < 0 || tod > 3) return {};
+    return top_filtered(plays, archive, most_first,
+        [tod](const HistoryPlay& p) { return history_tod_bucket(p.started_at) == tod; },
+        [tod](const HistoryArchiveTitle& t) { return t.tod[static_cast<size_t>(tod)]; });
 }
 
 HistoryStats history_stats(const std::vector<HistoryPlay>& plays, const HistoryArchive* archive) {

@@ -34,7 +34,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, NormMenu, Equalizer, SleepTimer, LyricsEdit };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, NormMenu, Equalizer, SleepTimer, LyricsEdit, Karaoke };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -290,6 +290,18 @@ private:
     std::string playlist_manage_query_; // filter behind playlist_manage_view_
     int playlist_manage_focus_ = 0;     // 0=search box, 1=list -- cycled with Tab
     bool playlist_confirm_delete_ = false; // "really delete this playlist?" Y/N prompt (tab 1, DEL key)
+    // Export overlay ('e' on the Saved Playlists tab): writes the hovered
+    // playlist as an M3U8 (default) or M3U file into a folder that starts as
+    // Settings -> PATHS -> PLAYLIST EXPORT PATH and can be changed in place.
+    bool playlist_export_open_ = false;
+    std::string playlist_export_name_;     // the playlist being exported
+    std::string playlist_export_dir_;      // the folder field
+    bool playlist_export_m3u_ = false;     // false = .m3u8 (UTF-8, the default), true = .m3u
+    int playlist_export_field_ = 0;        // 0 = folder field, 1 = format row
+    std::string playlist_export_status_;   // shown inside the overlay
+    void playlist_export_begin();          // opens the overlay for the hovered saved playlist
+    void playlist_export_run();            // ENTER in the overlay
+    std::vector<std::string> build_playlist_export_panel(int panel_w) const;
     std::string playlist_status_; // shown at the bottom of the overlay; cleared on (re)entry
 
     void playlist_refresh_lib_view();
@@ -418,11 +430,16 @@ private:
     std::vector<HistoryTopRow> history_top_view_; // rebuilt by history_refresh_top()
     std::string history_status_;       // footer status line, set by 'r' / the queue adds
     // Top Tracks tab only: it is split into two stacked panes. 0 = the track
-    // list (Up/Down move its cursor), 1 = the "ADD TOP TRACKS TO QUEUE" pane
-    // below it (Up/Down pick Top 10/25/50/100, Enter queues them). TAB toggles.
+    // list (Up/Down move its cursor), 1 = the "ADD SMART HISTORY TO QUEUE"
+    // pane below it: a 4 x 4 grid of lists (column 0 Top 10/25/50/100, then
+    // top of the week/month/quarter/year, top by time of day, and the
+    // "rediscover" lists). Arrows move in the grid, Enter queues the list,
+    // TAB toggles the panes, ESC leaves the grid for the track list.
     int history_pane_ = 0;
-    int history_add_sel_ = 0;          // 0..3 -> kHistoryAddCounts[]
+    int history_add_sel_ = 0;          // row 0..3 in the smart grid
+    int history_add_col_ = 0;          // column 0..3 in the smart grid
     static constexpr int kHistoryAddCounts[4] = {10, 25, 50, 100};
+    static constexpr int kSmartListSize = 25; // every smart list except column 0
     HistoryStore history_;             // the store itself (also used outside this overlay)
 
     void history_open();               // HKeyHistory entry point
@@ -438,6 +455,12 @@ private:
     // order the Top Tracks list is currently showing). Local files that no
     // longer exist are skipped and reported, like a playlist add.
     void history_add_top_to_queue(int n);
+    // The smart grid: queues the list at (col, row) -- see history_pane_.
+    void history_queue_smart(int col, int row);
+    // Appends up to `take` rows to the queue (missing local files are skipped)
+    // and reports it in the history status line under `label`.
+    void history_queue_rows(const std::vector<HistoryTopRow>& rows, int take, const std::string& label,
+                            const std::string& empty_msg);
     // Play bookkeeping: called from poll_pending_load()/advance_track() when a
     // track starts or is handed over, and from the frame loop to accrue time.
     void history_end_current_play();   // closes the live record (no-op if none) + saves
@@ -572,6 +595,13 @@ private:
     // because build_cheatsheet_screen() is const and clamps it against the
     // rows that actually fit as it draws.
     mutable int cheatsheet_scroll_ = 0;
+    // Karaoke overlay (Mode::Karaoke, HKeyKaraoke = "k"): the lyrics of the
+    // playing track filling the screen, the active line highlighted word by
+    // word, with the karaoke braille art on the left (disk colours, a moving
+    // colour wave like the radio's ON AIR sign). Playback keys keep working.
+    void build_karaoke_screen(std::ostringstream& frame, int W, int H);
+    bool karaoke_size_dirty_ = false;   // lyrics size changed in the overlay: saved to config.txt when it closes
+    std::chrono::steady_clock::time_point karaoke_flash_until_{};   // "[ lyrics size n / 5 ]" on the bottom border until then
     void build_cheatsheet_screen(std::ostringstream& frame, int W) const;
 
     // The Console and Settings overlays must always be exactly as tall as
@@ -876,6 +906,7 @@ private:
         // switches on this flag first.
         bool download_folder = false;
         bool history_folder = false;   // Path: the single HISTORY PATH field (settings_.history_path)
+        bool export_folder = false;    // Path: the single PLAYLIST EXPORT PATH field (settings_.playlist_export_path)
         const char* label = "";    // Header: section title; AddPath: "+ new path"
     };
     // Every display row of the path section, in paint order, with `sel`

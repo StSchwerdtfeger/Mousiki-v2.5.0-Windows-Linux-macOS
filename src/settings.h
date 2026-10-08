@@ -230,6 +230,12 @@ struct Settings {
 
     // Sleep timer: glide the volume down over the last 10 % of the time before pausing (Shift+Z overlay).
     bool sleep_fade = true;
+    // Karaoke overlay (k): size of the lyrics, 1 = normal text, 2..5 = drawn
+    // with the built-in pixel font in braille, each step one font pixel
+    // bigger. Changed in the overlay with SHIFT and + / SHIFT and -.
+    int karaoke_lyrics_size = 1;
+    // SID tunes (C64) are rendered by sidplayfp for this many seconds (config.txt only: SidPlayLength=, 10..1800).
+    int sid_play_length = 180;
 
     // --- autosave / session snapshot (config.txt: AutoSave*) -----------
     bool autosave_enabled = true;
@@ -268,6 +274,11 @@ struct Settings {
     // Folder that holds the listening history (history.json). Empty = ~/.cache/mousiki/history. ONE folder
     // (Settings -> PATHS -> HISTORY PATH, config.txt: HistoryPath=).
     std::string history_path;
+
+    // Folder the playlist editor exports M3U8 / M3U files to ('e' on the
+    // Saved Playlists tab). Empty = the playlist folder itself. ONE folder
+    // (Settings -> PATHS -> PLAYLIST EXPORT PATH, config.txt: PlaylistExportPath=).
+    std::string playlist_export_path;
 
     // --- playlists folder -----------------------------------------------
     // Where saved playlists (App::playlists_dir()) live. Empty (the

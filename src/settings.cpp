@@ -319,7 +319,9 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyClearFilter",                 "c"},
             {"HKeyQuit",                        "q"},
             {"HKeyDownloadStream",              "y"},
-            {"HKeyRefreshUi",                   "k"},
+            // "k" opens the karaoke overlay; Refresh UI moved to "r" (v3.0.1, migrated below).
+            {"HKeyRefreshUi",                   "r"},
+            {"HKeyKaraoke",                     "k"},
             {"HKeyConsole",                     "t"},
             {"HKeyToggleMute",                  "x"},
             {"HKeyCheatsheet",                  "?"},
@@ -415,6 +417,19 @@ void apply_default_hotkeys(Settings& s) {
                     if (key == "-" || key == ".") { taken = true; break; }
                 }
                 if (!taken) { up->second = "+"; down->second = "-"; lyr->second = "."; }
+            }
+        }
+        // v3.0.1: "k" is the karaoke overlay now and Refresh UI moved to "r".
+        // A config from before (Refresh UI still on "k", no karaoke key yet)
+        // is moved over -- unless the user has put something else on "r".
+        if (s.hotkeys.find("HKeyKaraoke") == s.hotkeys.end()) {
+            auto ref = s.hotkeys.find("HKeyRefreshUi");
+            if (ref != s.hotkeys.end() && ref->second == "k") {
+                bool r_taken = false;
+                for (const auto& [action, key] : s.hotkeys)
+                    if (action != "HKeyRefreshUi" && key == "r") { r_taken = true; break; }
+                if (!r_taken) ref->second = "r";
+                else s.hotkeys["HKeyKaraoke"] = "";   // no free default: left unbound (rebind it under Settings -> REFERENCE)
             }
         }
         for (const auto& [action, key] : defaults) {
@@ -855,6 +870,14 @@ static Settings load_from_config(const fs::path& path) {
 
         // --- Autosave / session snapshot --------------------------------
         if (key == "SleepFade") { s.sleep_fade = parse_bool(value); continue; }
+        if (key == "SidPlayLength") {
+            try { s.sid_play_length = std::clamp(std::stoi(trim(unquote(value))), 10, 1800); } catch (...) {}
+            continue;
+        }
+        if (key == "KaraokeLyricsSize") {
+            try { s.karaoke_lyrics_size = std::clamp(std::stoi(trim(unquote(value))), 1, 5); } catch (...) {}
+            continue;
+        }
         if (key == "AutoSave") { s.autosave_enabled = parse_bool(value); continue; }
         if (key == "AutoSaveIndicator") { s.autosave_indicator = parse_bool(value); continue; }
         if (key == "AutoSaveDelayInSec") { try { s.autosave_delay_sec = std::max(1, std::stoi(value)); } catch (...) {} continue; }
@@ -921,6 +944,15 @@ static Settings load_from_config(const fs::path& path) {
         // materialising the default into the file) is what lets a changed
         // default take effect without rewriting anyone's config.txt.
         // Same ~ expansion as LocalMusicPath, above.
+        if (key == "PlaylistExportPath" || key == "playlist_export_path") {
+            std::string path = trim(unquote(value));
+            if (!path.empty() && path[0] == '~') {
+                const char* home = std::getenv("HOME");
+                if (home) path = std::string(home) + path.substr(1);
+            }
+            if (!path.empty()) s.playlist_export_path = path;
+            continue;
+        }
         if (key == "HistoryPath" || key == "history_path") {
             std::string path = trim(unquote(value));
             if (!path.empty() && path[0] == '~') {
@@ -1215,6 +1247,8 @@ static void write_settings(std::ostream& out, const Settings& s) {
     out << "##             AUTOSAVE / SESSION SNAPSHOT\n";
     out << "##-------------------------------------------\n\n";
     out << "SleepFade=" << tf(s.sleep_fade) << "\n## sleep timer: fade the volume out over the last 10 % of the time (30 s .. 10 min), then pause\n";
+    out << "SidPlayLength=" << s.sid_play_length << "\n## SID tunes (C64) are rendered by sidplayfp for this many seconds (10 .. 1800)\n";
+    out << "KaraokeLyricsSize=" << s.karaoke_lyrics_size << "\n## karaoke overlay (k): lyrics size 1 (normal text) .. 5, SHIFT and + / SHIFT and - change it there\n";
     out << "AutoSave=" << tf(s.autosave_enabled) << "\n## resume exact song/position/queue/repeat/shuffle next launch\n";
     out << "AutoSaveIndicator=" << tf(s.autosave_indicator) << "\n";
     out << "AutoSaveDelayInSec=" << s.autosave_delay_sec << "\n";
@@ -1262,6 +1296,10 @@ static void write_settings(std::ostream& out, const Settings& s) {
     out << "# and deleting uses the first one.\n";
     for (const auto& path : s.playlists_paths) {
         if (!path.empty()) out << "PlaylistsPath=" << path << "\n";
+    }
+    if (!s.playlist_export_path.empty()) {
+        out << "\n# Where playlists are exported as M3U8 / M3U (one folder; unset means the playlist folder).\n";
+        out << "PlaylistExportPath=" << s.playlist_export_path << "\n";
     }
     if (!s.history_path.empty()) {
         out << "\n# Folder of the listening history (history.json; one folder, unset means ~/.cache/mousiki/history).\n";

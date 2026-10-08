@@ -1,4 +1,5 @@
 #include "local_source.h"
+#include "chiptune.h"
 #include "path_utf8.h"
 #include "utf8_util.h"
 #include <algorithm>
@@ -29,7 +30,8 @@ bool LocalSource::is_audio_file(const fs::path& p) {
     // and a case-sensitive set lookup silently excluded every one of them
     // from the scan -- not an error, just an empty-looking library.
     std::string ext = ascii_lower_str(path_str(p.extension()));
-    return exts.count(ext) > 0;
+    // Tracker modules and chiptunes too (MOD / XM / IT / ..., NSF / SPC / VGM / ..., SID) -- see chiptune.h.
+    return exts.count(ext) > 0 || is_chiptune_file(p);
 }
 
 std::vector<LocalTrack> LocalSource::scan(const std::vector<std::string>& custom_paths,

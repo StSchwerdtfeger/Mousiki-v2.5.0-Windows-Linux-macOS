@@ -1,4 +1,5 @@
 #include "metadata_probe.h"
+#include "chiptune.h"
 #include "process_util.h"
 #include "path_utf8.h"
 #include "utf8_util.h"
@@ -49,6 +50,15 @@ RowMeta probe_row_meta(const fs::path& file) {
     // unreadable file forever. Only the fields actually parsed below get
     // filled in; everything else stays at its default (empty/-1).
     rm.tags_resolved = true;
+    if (is_sid_file(file)) {   // ffprobe cannot read SID: the header has name / author / release year
+        const SidInfo si = read_sid_header(file);
+        if (si.ok) {
+            if (si.name != "<?>") rm.title = si.name;
+            if (si.author != "<?>") rm.artist = si.author;
+            if (si.released.size() >= 4 && std::isdigit(static_cast<unsigned char>(si.released[0]))) rm.year = si.released.substr(0, 4);
+        }
+        return rm;
+    }
     if (r.out.empty()) return rm;
 
     std::istringstream stream(r.out);
@@ -104,6 +114,19 @@ TrackMetadata probe_metadata(const fs::path& file, const std::string& fallback_n
         md.file_size = oss.str();
     }
 
+    // SID tunes: ffprobe cannot read them, the PSID header has the name, author and release line.
+    if (is_sid_file(file)) {
+        const SidInfo si = read_sid_header(file);
+        if (si.ok) {
+            if (!si.name.empty() && si.name != "<?>") md.name = si.name;
+            if (!si.author.empty() && si.author != "<?>") md.artist = si.author;
+            if (si.released.size() >= 4 && std::isdigit(static_cast<unsigned char>(si.released[0]))) md.year = si.released.substr(0, 4);
+            md.format = si.rsid ? "RSID" : "PSID";
+            md.type = "C64 SID" + std::string(si.songs > 1 ? " (" + std::to_string(si.songs) + " tunes)" : "");
+        }
+        return md;
+    }
+
     std::string cmd = "ffprobe -v error "
                        "-show_entries format=duration:format_tags=artist,date,title:stream=sample_rate,codec_name "
                        "-of default=noprint_wrappers=1 " + shell_quote(path_utf8(file));
@@ -131,6 +154,11 @@ TrackMetadata probe_metadata(const fs::path& file, const std::string& fallback_n
         } else if (key == "TAG:date") {
             md.year = val.substr(0, 4);
         }
+    }
+    // Tracker modules and game music: ffprobe reports the decoded PCM ("PCM_F32LE"); the file type says more.
+    if (is_tracker_file(file) || is_gme_file(file)) {
+        md.format = to_upper(path_utf8(file.extension()).substr(1));
+        md.type = is_tracker_file(file) ? "tracker module" : "game music";
     }
     return md;
 }

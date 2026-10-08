@@ -4,6 +4,8 @@
 #include "path_utf8.h"
 #include "utf8_util.h"
 #include "console_log.h"
+#include "karaoke_font.h"
+#include "chiptune.h"
 #include <cstring>
 #include <algorithm>
 #include <cctype>
@@ -19,6 +21,8 @@
 #include <sstream>
 #include <thread>
 #include <unordered_set>
+#include <sys/types.h>
+#include <sys/stat.h>   // file_added_time(): stat() / _wstat64()
 #if defined(_WIN32)
 #include "win_compat.h"
 #else
@@ -1540,7 +1544,8 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
     // makes it safe to join from launch_load_async without risking a
     // freeze if the user switches tracks again quickly.
     const bool want_stereo = settings_.stereo; // read here, on the calling thread, rather than from inside the load thread
-    load_thread_ = std::thread([this, local_path, title, artist, location_label, is_local, video_id, want_stereo]() {
+    const int sid_seconds = settings_.sid_play_length;
+    load_thread_ = std::thread([this, local_path, title, artist, location_label, is_local, video_id, want_stereo, sid_seconds]() {
       run_guarded("track load", [&] {
         using clock = std::chrono::steady_clock;
         auto t_start = clock::now();
@@ -1578,6 +1583,25 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
         }
         pl.path = path;
 
+        // Tracker modules / game music (ffmpeg via libopenmpt / libgme) and SID tunes (rendered by sidplayfp into a
+        // cached WAV, which is then decoded and probed instead of the .sid -- pl.path stays the .sid itself).
+        fs::path decode_from = path;
+        if (is_local && is_chiptune_file(path)) {
+            std::string problem = chiptune_support_problem(path);
+            if (problem.empty() && is_sid_file(path)) {
+                fs::path wav;
+                if (render_sid_to_wav(path, sid_seconds, wav, &problem)) decode_from = wav;
+            }
+            if (!problem.empty()) {
+                pl.error = problem;
+                write_load_timing_log(title, is_local, 0, 0, elapsed_s(t_start), pl.error);
+                std::lock_guard<std::mutex> lk(load_mutex_);
+                pending_load_ = std::move(pl);
+                load_ready_ = true;
+                return;
+            }
+        }
+
         load_stage_ = 4;
         auto t2 = clock::now();
         pl.metadata = probe_metadata(path, pl.title, pl.artist, pl.location_label);
@@ -1592,7 +1616,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
             }
         }
         
-        double duration = probe_duration_seconds(path);
+        double duration = probe_duration_seconds(decode_from);
         t_probe = elapsed_s(t2);
         pl.total_sec = duration > 0 ? static_cast<size_t>(duration) : 0;
 
@@ -1618,7 +1642,7 @@ void App::launch_load_async(fs::path local_path, std::string title, std::string 
         // than cleanly killed — worth fixing with real process-group
         // tracking later, not a correctness or crash risk today.
         std::shared_ptr<StreamingPcm> pcm = pl.pcm;
-        fs::path decode_path = path;
+        fs::path decode_path = decode_from;
         std::string wtitle = pl.title, wartist = pl.artist;
         bool waveform_smooth = settings_.waveform_smooth; // captured by value — see below, avoids a cross-thread read of settings_
         std::thread([this, decode_path, pcm, waveform_smooth]() { run_guarded("track decode", [&] {
@@ -2570,6 +2594,7 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyRefreshUi", "Refresh UI"},
     {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
     {nullptr, "HKeyToggleLyrics", "Cycle Lyrics / Visual"},
+    {nullptr, "HKeyKaraoke", "Karaoke Overlay"},
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
     {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
@@ -2712,6 +2737,22 @@ std::vector<App::PathRow> App::build_path_rows() const {
         PathRow n;
         n.kind = PathRow::Kind::Note;
         n.label = "Changing it copies the existing playlists to the new folder.";
+        rows.push_back(n);
+    }
+
+    // PLAYLIST EXPORT PATH: ONE folder (settings_.playlist_export_path) that 'e' on the Saved Playlists tab exports to.
+    {
+        PathRow p;
+        p.label = "PLAYLIST EXPORT PATH";
+        p.kind = PathRow::Kind::Path;
+        p.sel = sel++;
+        p.path_index = -1;
+        p.export_folder = true;
+        rows.push_back(p);
+
+        PathRow n;
+        n.kind = PathRow::Kind::Note;
+        n.label = "Where [e] on the Saved Playlists tab exports M3U8 / M3U files (empty = the playlist folder).";
         rows.push_back(n);
     }
 
@@ -2903,6 +2944,7 @@ std::string App::settings_get_value(int row, int col) const {
         if (r.sel < 0) return "";
         if (r.kind == PathRow::Kind::Path) {
             if (r.history_folder) return settings_.history_path.empty() ? history_.effective_dir() : settings_.history_path;
+            if (r.export_folder) return settings_.playlist_export_path.empty() ? path_utf8(playlists_dir()) : settings_.playlist_export_path;
             if (r.download_folder) {
                 // Show what is actually in effect: while nothing has been
                 // configured that is the default cache folder, and the point
@@ -3034,6 +3076,12 @@ void App::settings_commit_edit() {
             if (!p.empty() && p[0] == '~') {
                 const char* home = std::getenv("HOME");
                 if (home) p = std::string(home) + p.substr(1);
+            }
+            if (r.export_folder) {
+                // One folder, nothing moves: only where the next export goes (empty = the playlist folder).
+                settings_.playlist_export_path = p;
+                status_line_ = p.empty() ? "playlist export folder: the playlist folder" : "playlist export folder: " + p;
+                return;
             }
             if (r.history_folder) {
                 // One folder: the history moves with it (an existing history.json there is read, otherwise the current one is written there).
@@ -3627,6 +3675,48 @@ void App::handle_key(int key) {
         return;
     }
 
+    if (mode_ == Mode::Karaoke) {
+        // ESC or the karaoke key close it; the playback keys (play/pause,
+        // next/previous, seek, volume, mute, ...) work as on the main screen
+        // and are simply handed to it; everything else is ignored.
+        const bool arrow = last_key_was_arrow();
+        auto karaoke_close = [this]() {
+            mode_ = Mode::Browse;
+            if (karaoke_size_dirty_) { save_settings(settings_); karaoke_size_dirty_ = false; }   // the lyrics size sticks
+        };
+        if (key == 27) { karaoke_close(); return; }
+        if (arrow && (key == 'A' || key == 'B')) return;
+        // SHIFT and + / SHIFT and - (the characters '*' and '_'): lyrics size 1..5. Fixed keys -- on a US keyboard
+        // '*' is SHIFT+8. Only the lyrics change size, the pictures stay as they are.
+        if (!arrow && (key == '*' || key == '_')) {
+            const int before = settings_.karaoke_lyrics_size;
+            settings_.karaoke_lyrics_size = std::clamp(before + (key == '*' ? 1 : -1), 1, 5);
+            if (settings_.karaoke_lyrics_size != before) karaoke_size_dirty_ = true;
+            karaoke_flash_until_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+            return;
+        }
+        std::string act;
+        if (!arrow) {
+            const int lk = (key == '\r') ? '\n' : key;
+            act = resolve_hotkey_action(lk);
+            if (act.empty() && lk >= 'a' && lk <= 'z') act = resolve_hotkey_action(lk - 32);
+            if (act.empty() && lk >= 'A' && lk <= 'Z') act = resolve_hotkey_action(lk + 32);
+        }
+        if (act == "HKeyKaraoke") { karaoke_close(); return; }
+        static const char* const kPassThrough[] = {
+            "HKeyTogglePlayPause", "HKeyPlayNextSong", "HKeyPlayPreviousSong", "HKeyShuffleNext",
+            "HKeyIncreaseVolume", "HKeyDecreaseVolume", "HKeyToggleMute", "HKeyCyclePlayMode", "HKeyToggleNormalize",
+        };
+        bool pass = arrow && (key == 'C' || key == 'D');   // Left/Right: seek
+        for (const char* a : kPassThrough) if (act == a) pass = true;
+        if (pass) {
+            mode_ = Mode::Browse;
+            handle_key(key);
+            if (mode_ == Mode::Browse) mode_ = Mode::Karaoke;
+        }
+        return;
+    }
+
     if (mode_ == Mode::Cheatsheet) {
         if (key == 27 || key == '?') mode_ = Mode::Browse;
         else if (key == 'A') --cheatsheet_scroll_; // up -- the table is longer than the screen
@@ -4045,6 +4135,9 @@ void App::handle_key(int key) {
             static const char* mode_names[] = {"list", "repeat", "shuffle", "stop", "queue then stop"};
             log_event(std::string("play mode: ") + mode_names[settings_.play_mode]);
         }
+    } else if (action == "HKeyKaraoke") {
+        // The karaoke overlay: the lyrics of the playing track over the whole screen.
+        mode_ = Mode::Karaoke;
     } else if (action == "HKeyRefreshUi") {
         // Force a full redraw, for when a resize or terminal-session
         // switch raced the render loop and left a torn/stale frame on
@@ -5404,6 +5497,7 @@ void App::playlist_refresh_manage_view() {
 // accident.
 void App::playlist_open_editor() {
     mode_ = Mode::Playlist;
+    playlist_export_open_ = false;
     text_disengage();
     playlist_tab_ = 0;
     playlist_edit_focus_ = 0;
@@ -5433,6 +5527,133 @@ void App::playlist_load_into_editor(const std::string& name) {
     text_disengage();
     playlist_edit_dirty_ = false; // freshly loaded from disk -- matches what's saved, nothing to lose yet
     playlist_status_ = "editing \"" + pl->name + "\" (" + std::to_string(pl->tracks.size()) + " tracks)";
+}
+
+static std::string header_sgr(const Settings& s); // defined further down (Settings panel section)
+static std::string legend_sgr(const Settings& s); // likewise
+
+// ---------------------------------------------------------------------
+// Playlist export (M3U8 / M3U)
+// ---------------------------------------------------------------------
+
+void App::playlist_export_begin() {
+    const int total = static_cast<int>(playlist_manage_view_.size());
+    if (playlist_manage_selected_ < 0 || playlist_manage_selected_ >= total) { playlist_status_ = "no playlist selected"; return; }
+    playlist_export_name_ = playlist_manage_view_[playlist_manage_selected_].name;
+    playlist_export_dir_ = settings_.playlist_export_path.empty() ? path_utf8(playlists_dir()) : settings_.playlist_export_path;
+    playlist_export_m3u_ = false;
+    playlist_export_field_ = 0;
+    playlist_export_status_.clear();
+    edit_owner_.clear();   // the folder field takes the caret fresh (at the end)
+    playlist_export_open_ = true;
+}
+
+void App::playlist_export_run() {
+    std::string dir = playlist_export_dir_;
+    while (!dir.empty() && (dir.front() == ' ' || dir.front() == '\t')) dir.erase(dir.begin());
+    while (!dir.empty() && (dir.back() == ' ' || dir.back() == '\t')) dir.pop_back();
+    if (!dir.empty() && dir[0] == '~') {
+        const char* home = std::getenv("HOME");
+        if (home) dir = std::string(home) + dir.substr(1);
+    }
+    if (dir.empty()) { playlist_export_status_ = "enter a folder first"; playlist_export_field_ = 0; return; }
+    auto pl = load_playlist(playlist_export_name_);
+    if (!pl) { playlist_export_status_ = "could not load \"" + playlist_export_name_ + "\""; return; }
+
+    const fs::path folder = path_from_utf8(dir);
+    std::error_code ec;
+    fs::create_directories(folder, ec);
+    if (!fs::is_directory(folder, ec)) { playlist_export_status_ = "cannot create the folder " + dir; return; }
+    const std::string ext = playlist_export_m3u_ ? ".m3u" : ".m3u8";
+    const fs::path file = folder / path_from_utf8(PlaylistManager::sanitize_name(pl->name) + ext);
+
+    // Extended M3U: one #EXTINF line (length unknown = -1, "Artist - Title")
+    // and the absolute path per track. Both formats are written as UTF-8 --
+    // M3U8 is defined that way, and current players read a plain .m3u as
+    // UTF-8 too. Missing files are left out (and counted).
+    std::ostringstream out;
+    out << "#EXTM3U\n";
+    out << "#PLAYLIST:" << pl->name << "\n";
+    int written = 0, missing = 0;
+    for (const auto& t : pl->tracks) {
+        if (!fs::exists(t.path, ec)) { ++missing; continue; }
+        std::string title = t.title, artist = t.artist;
+        {
+            std::lock_guard<std::mutex> lk(row_meta_mutex_);
+            auto it = row_meta_cache_.find(path_utf8(t.path));
+            if (it != row_meta_cache_.end()) {
+                if (!it->second.title.empty()) title = it->second.title;
+                if (!it->second.artist.empty()) artist = it->second.artist;
+            }
+        }
+        out << "#EXTINF:-1," << (artist.empty() ? title : artist + " - " + title) << "\n";
+        out << path_utf8(fs::absolute(t.path, ec)) << "\n";
+        ++written;
+    }
+    std::ofstream f(file, std::ios::binary | std::ios::trunc);
+    if (!f.is_open()) { playlist_export_status_ = "cannot write " + path_utf8(file); return; }
+    f << out.str();
+    f.close();
+    playlist_export_open_ = false;
+    playlist_status_ = "exported " + std::to_string(written) + " track" + (written == 1 ? "" : "s") + " to " + path_utf8(file)
+                     + (missing > 0 ? " (" + std::to_string(missing) + " missing, left out)" : "");
+    log_event(playlist_status_);
+}
+
+std::vector<std::string> App::build_playlist_export_panel(int panel_w) const {
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string bar = border + settings_.box_vertical + "\x1b[0m";
+    const std::string R = "\x1b[0m";
+    const int inner = panel_w - 4;
+    std::vector<std::string> lines;
+    auto row = [&](const std::string& painted, int cols) {
+        lines.push_back(bar + " " + painted + std::string(static_cast<size_t>(std::max(0, inner - cols)), ' ') + " " + bar);
+    };
+    lines.push_back(box_top("EXPORT PLAYLIST \"" + truncate_str(playlist_export_name_, std::max(4, panel_w - 24)) + "\"", panel_w, border));
+    row("", 0);
+    {   // the folder field, with caret while it has the focus
+        const std::string label = "Folder : ";
+        const int lw = display_width(label);
+        const bool f = playlist_export_field_ == 0;
+        std::string painted; int cols;
+        if (f) {
+            const size_t c = std::min(edit_caret_, playlist_export_dir_.size());
+            const size_t a = std::min(edit_anchor_, playlist_export_dir_.size());
+            EditPaint p = paint_edit_field(playlist_export_dir_, edit_owner_ == "playlist-export-dir" ? c : playlist_export_dir_.size(),
+                                           edit_owner_ == "playlist-export-dir" ? a : playlist_export_dir_.size(),
+                                           std::max(4, inner - lw), "", true);
+            painted = p.s; cols = p.cols;
+        } else {
+            painted = truncate_str(playlist_export_dir_, std::max(4, inner - lw));
+            cols = display_width(painted);
+        }
+        row(header_sgr(settings_) + label + R + painted, lw + cols);
+    }
+    {   // the format row
+        const std::string label = "Format : ";
+        const bool f = playlist_export_field_ == 1;
+        const std::string hi = f ? cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color) : "\x1b[1m";
+        const std::string m8 = playlist_export_m3u_ ? " M3U8 " : hi + "[M3U8]" + R;
+        const std::string m3 = playlist_export_m3u_ ? hi + "[M3U]" + R : " M3U ";
+        row(header_sgr(settings_) + label + R + m8 + "  " + m3 + legend_sgr(settings_) + "   (M3U8 = UTF-8, the default)" + R,
+            display_width(label) + 6 + 2 + 5 + display_width("   (M3U8 = UTF-8, the default)"));
+    }
+    {
+        const std::string file = PlaylistManager::sanitize_name(playlist_export_name_) + (playlist_export_m3u_ ? ".m3u" : ".m3u8");
+        const std::string t = truncate_str("File   : " + file, inner);
+        row(t, display_width(t));
+    }
+    row("", 0);
+    {
+        const std::string st = truncate_str(playlist_export_status_, inner);
+        row("\x1b[32m" + st + R, display_width(st));
+    }
+    {
+        const std::string hint = truncate_str("[TAB/\u2191\u2193] Field | [\u2190\u2192] Cursor / format | [ENTER] Export | [ESC] Cancel", inner);
+        row(legend_sgr(settings_) + hint + R, display_width(hint));
+    }
+    lines.push_back(box_bottom(panel_w, "", border));
+    return lines;
 }
 
 void App::playlist_add_hovering_to_edit() {
@@ -5549,6 +5770,22 @@ void App::handle_playlist_key(int key) {
         return;
     }
 
+    // Export overlay ('e' on the Saved Playlists tab): owns every key while open.
+    if (playlist_export_open_) {
+        const bool arrow = last_key_was_arrow();
+        if (key == 27) { playlist_export_open_ = false; return; }
+        if (key == '\r' || key == '\n') { playlist_export_run(); return; }
+        if (key == kKeyCtrlS) { playlist_export_run(); return; }
+        if (key == 9 || (arrow && (key == 'A' || key == 'B'))) { playlist_export_field_ ^= 1; return; }
+        if (playlist_export_field_ == 1) {   // format row: Left/Right or SPACE flip M3U8 <-> M3U
+            if ((arrow && (key == 'C' || key == 'D')) || key == ' ') playlist_export_m3u_ = !playlist_export_m3u_;
+            return;
+        }
+        edit_focus("playlist-export-dir", playlist_export_dir_);
+        edit_text_key(playlist_export_dir_, edit_caret_, edit_anchor_, key, 240, &playlist_export_status_);
+        return;
+    }
+
     // Which text box (if any) has the keyboard right now -- the same owner
     // names edit_focus() uses. Empty on the two plain lists.
     const char* field = playlist_tab_ == 1 ? (playlist_manage_focus_ == 0 ? "playlist-manage-search" : "")
@@ -5628,6 +5865,7 @@ void App::handle_playlist_key(int key) {
             playlist_confirm_delete_ = true;
             return;
         }
+        if (key == 'e' || key == 'E') { playlist_export_begin(); return; }   // export as M3U8 / M3U
         return;
     }
 
@@ -6143,8 +6381,10 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
                           : playlist_edit_focus_ == 1 ? "playlist-lib-search" : "";
         const bool in_text = *field && text_engaged(field);
         std::string hint = std::string(in_text ? "[\u2190\u2192] Cursor" : "[\u2190\u2192] Switch Tab")
-                         + " | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
-                           "[DEL] Remove | [4/5] Move \u2191\u2193 | [CTRL+s] Save";
+                         + (playlist_tab_ == 1
+                            ? " | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Load | [DEL] Delete | [e] Export M3U8/M3U"
+                            : " | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
+                              "[DEL] Remove | [4/5] Move \u2191\u2193 | [CTRL+s] Save");
         frame << legend_sgr(settings_) << hint << "\x1b[0m\n";
         // Row 2: the text-field keys, plus Exit. Kept off row 1 so each row
         // fits comfortably inside a 120-column terminal without wrapping
@@ -6157,6 +6397,7 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
     }
+
 }
 
 // ---------------------------------------------------------------------
@@ -7496,21 +7737,40 @@ void App::history_begin_current_play() {
     history_.begin_play(p);
 }
 
-void App::history_add_top_to_queue(int n) {
-    // Ranked independently of the list above (which 'r' can flip to
-    // least-played first): "top N" always means the N most-played titles.
-    const std::vector<HistoryTopRow> top = history_top(history_.plays(), /*most_first=*/true, &history_.archive());
-    if (top.empty()) {
-        history_status_ = "nothing played yet -- nothing to queue";
-        return;
-    }
-    const int take = std::min(n, static_cast<int>(top.size()));
+// The smart grid of the ADD SMART HISTORY TO QUEUE pane (Top Tracks tab):
+// column titles and the label of every list, [column][row].
+static const char* const kSmartColTitles[4] = {"TOP TRACKS", "TOP OF THE ...", "TIME OF DAY", "REDISCOVER"};
+static const char* const kSmartLabels[4][4] = {
+    {"Top 10 tracks", "Top 25 tracks", "Top 50 tracks", "Top 100 tracks"},
+    {"Top 25 of the week", "Top 25 of the month", "Top 25 of the quarter", "Top 25 of the year"},
+    {"Morning (7-11 a.m.)", "Day (11 a.m.-6 p.m.)", "Evening (6-10 p.m.)", "Night (10 p.m.-7 a.m.)"},
+    {"Last 25 newly added", "Least 25 played", "Least played: month", "Least played: year"},
+};
+
+// When a local file arrived in the library: the later of its modification
+// time and its creation / status-change time (a file copied or downloaded
+// into a music folder keeps an old modification time on many systems, but
+// its creation time -- Windows -- or inode change time -- POSIX -- is when it
+// arrived). 0 when the file cannot be read.
+static long long file_added_time(const fs::path& p) {
+#if defined(_WIN32)
+    struct _stat64 st;
+    if (_wstat64(p.c_str(), &st) != 0) return 0;
+#else
+    struct stat st;
+    if (::stat(p.c_str(), &st) != 0) return 0;
+#endif
+    return static_cast<long long>(std::max(st.st_mtime, st.st_ctime));
+}
+
+void App::history_queue_rows(const std::vector<HistoryTopRow>& rows, int take, const std::string& label,
+                             const std::string& empty_msg) {
+    if (rows.empty()) { history_status_ = empty_msg; return; }
+    const int n = std::min(take, static_cast<int>(rows.size()));
     int added = 0, missing = 0;
-    for (int i = 0; i < take; ++i) {
-        const HistoryTopRow& r = top[static_cast<size_t>(i)];
-        // history_top() already carries the newest known artist of the title
-        // (from the window or, for older plays, the archive).
-        const std::string artist = r.artist;
+    for (int i = 0; i < n; ++i) {
+        const HistoryTopRow& r = rows[static_cast<size_t>(i)];
+        const std::string artist = (r.artist == "-") ? std::string() : r.artist;
         if (r.id.compare(0, 3, "yt:") == 0) {
             queue_.push_back({false, r.title, artist, {}, r.id.substr(3)});
             ++added;
@@ -7518,37 +7778,117 @@ void App::history_add_top_to_queue(int n) {
             fs::path path = path_from_utf8(r.id);
             std::error_code ec;
             if (!fs::exists(path, ec)) { ++missing; continue; } // moved/deleted since it was played
-            queue_.push_back({true, r.title, artist, path, ""});
+            const std::string title = r.title.empty() ? path_utf8(path.stem()) : r.title;
+            queue_.push_back({true, title, artist, path, ""});
             ++added;
         }
     }
     clamp_queue_selected();
-    std::string msg = "queued " + std::to_string(added) + " of top " + std::to_string(n) + " tracks";
-    if (take < n) msg += " (only " + std::to_string(take) + " played so far)";
+    std::string msg = "queued " + std::to_string(added) + " tracks: " + label;
+    if (n < take) msg += " (only " + std::to_string(n) + " available)";
     if (missing > 0) msg += " (" + std::to_string(missing) + " missing, skipped)";
     history_status_ = msg;
     log_event(msg);
+}
+
+void App::history_add_top_to_queue(int n) {
+    // Ranked independently of the list above (which 'r' can flip to
+    // least-played first): "top N" always means the N most-played titles.
+    history_queue_rows(history_top(history_.plays(), /*most_first=*/true, &history_.archive()), n,
+                       "Top " + std::to_string(n) + " tracks", "nothing played yet -- nothing to queue");
+}
+
+void App::history_queue_smart(int col, int row) {
+    col = std::clamp(col, 0, 3);
+    row = std::clamp(row, 0, 3);
+    const std::string label = kSmartLabels[col][row];
+    const long long now = static_cast<long long>(std::time(nullptr));
+    const HistoryArchive* arch = &history_.archive();
+    if (col == 0) { history_add_top_to_queue(kHistoryAddCounts[row]); return; }
+    if (col == 1) {   // top of the last 7 / 30 / 91 / 365 days
+        static const int kDays[4] = {7, 30, 91, 365};
+        history_queue_rows(history_top_since(history_.plays(), arch, now - kDays[row] * 86400LL, true),
+                           kSmartListSize, label, "nothing played in that time -- nothing to queue");
+        return;
+    }
+    if (col == 2) {   // morning / day / evening / night
+        history_queue_rows(history_top_tod(history_.plays(), arch, row, true),
+                           kSmartListSize, label, "nothing played at that time of day yet -- nothing to queue");
+        return;
+    }
+    if (row == 2 || row == 3) {   // least played among what was played in the last 30 / 365 days
+        history_queue_rows(history_top_since(history_.plays(), arch, now - (row == 2 ? 30 : 365) * 86400LL, false),
+                           kSmartListSize, label, "nothing played in that time -- nothing to queue");
+        return;
+    }
+    // Rows 0 and 1 work on the local library itself, not on the history.
+    if (all_local_tracks_.empty()) { history_status_ = "the local library is empty -- nothing to queue"; return; }
+    std::vector<HistoryTopRow> rows;
+    if (row == 0) {   // the newest arrivals in the music folders
+        std::vector<std::pair<long long, size_t>> by_time;
+        by_time.reserve(all_local_tracks_.size());
+        for (size_t i = 0; i < all_local_tracks_.size(); ++i)
+            by_time.push_back({file_added_time(all_local_tracks_[i].path), i});
+        std::stable_sort(by_time.begin(), by_time.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+        for (size_t k = 0; k < by_time.size() && static_cast<int>(rows.size()) < kSmartListSize; ++k) {
+            const LocalTrack& t = all_local_tracks_[by_time[k].second];
+            HistoryTopRow r;
+            r.id = path_utf8(t.path); r.title = t.title; r.artist = t.folder_artist;
+            rows.push_back(r);
+        }
+    } else {          // the whole library, fewest plays first -- never played counts as 0
+        std::map<std::string, int> plays;
+        for (const auto& r : history_top(history_.plays(), true, arch)) plays[r.id] = r.plays;
+        std::vector<std::pair<int, size_t>> by_plays;
+        by_plays.reserve(all_local_tracks_.size());
+        for (size_t i = 0; i < all_local_tracks_.size(); ++i) {
+            auto it = plays.find(path_utf8(all_local_tracks_[i].path));
+            by_plays.push_back({it == plays.end() ? 0 : it->second, i});
+        }
+        // Shuffled first, so tracks with the same count come in a different
+        // order every time (otherwise "least played" would always be the
+        // same alphabetical handful of never-played files).
+        std::shuffle(by_plays.begin(), by_plays.end(), std::mt19937(std::random_device{}()));
+        std::stable_sort(by_plays.begin(), by_plays.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+        for (size_t k = 0; k < by_plays.size() && static_cast<int>(rows.size()) < kSmartListSize; ++k) {
+            const LocalTrack& t = all_local_tracks_[by_plays[k].second];
+            HistoryTopRow r;
+            r.id = path_utf8(t.path); r.title = t.title; r.artist = t.folder_artist;
+            rows.push_back(r);
+        }
+    }
+    history_queue_rows(rows, kSmartListSize, label, "the local library is empty -- nothing to queue");
 }
 
 void App::handle_history_key(int key) {
     if (key == 0) return;
     const bool arrow = last_key_was_arrow();
 
+    // ESC in the smart grid only gives the focus back to the track list.
+    if (key == 27 && history_tab_ == 1 && history_pane_ == 1) { history_pane_ = 0; history_status_.clear(); return; }
     // Leaving: ESC, or SHIFT+h again -- the very key that opened this
     // (nothing here is a text field, so an uppercase 'H' is always that key).
     if (key == 27 || (key == 'H' && !arrow)) { mode_ = Mode::Browse; return; }
 
-    // Top Tracks tab: TAB does not cycle the tab strip there, it switches
-    // between the two panes (the track list and ADD TOP TRACKS TO QUEUE).
-    // Left/Right and 1/2/3 still move between tabs.
-    if (key == 9 && history_tab_ == 1) {
-        history_pane_ ^= 1;
-        history_status_.clear();
+    // Top Tracks tab: TAB switches between the two panes (the track list and
+    // ADD SMART HISTORY TO QUEUE). It never switches tabs (Left/Right do).
+    if (key == 9) {
+        if (history_tab_ == 1) { history_pane_ ^= 1; history_status_.clear(); }
         return;
     }
 
-    // Tab strip: Left/Right or TAB cycles, 1/2/3 jumps outright.
-    if ((arrow && (key == 'C' || key == 'D')) || key == 9) {
+    // Smart grid focused: all four arrows move in the grid (Left/Right do NOT
+    // switch tabs here), Enter queues the highlighted list.
+    if (history_tab_ == 1 && history_pane_ == 1) {
+        if (arrow && key == 'A') { if (history_add_sel_ > 0) --history_add_sel_; return; }
+        if (arrow && key == 'B') { if (history_add_sel_ < 3) ++history_add_sel_; return; }
+        if (arrow && key == 'D') { if (history_add_col_ > 0) --history_add_col_; return; }
+        if (arrow && key == 'C') { if (history_add_col_ < 3) ++history_add_col_; return; }
+        if (key == '\r' || key == '\n') { history_queue_smart(history_add_col_, history_add_sel_); return; }
+    }
+
+    // Tab strip: Left/Right cycle, 1/2/3 jump outright.
+    if (arrow && (key == 'C' || key == 'D')) {
         // 'D' is Left, 'C' is Right -- the same convention the seek keys and
         // the caret movement above use (see handle_key()'s "key == 'D' //
         // left = seek back"). Swapped here, every arrow press walked the tab
@@ -7568,14 +7908,6 @@ void App::handle_history_key(int key) {
         history_pane_ = 0;
         history_status_.clear();
         return;
-    }
-
-    // Top Tracks tab, lower pane focused: Up/Down pick Top 10/25/50/100 and
-    // Enter queues that many. (Enter does nothing while the list is focused.)
-    if (history_tab_ == 1 && history_pane_ == 1) {
-        if (arrow && key == 'A') { if (history_add_sel_ > 0) --history_add_sel_; return; }
-        if (arrow && key == 'B') { if (history_add_sel_ < 3) ++history_add_sel_; return; }
-        if (key == '\r' || key == '\n') { history_add_top_to_queue(kHistoryAddCounts[history_add_sel_]); return; }
     }
 
     // Enter on a track of the HISTORY / TOP TRACKS list: play it right away (the overlay stays open).
@@ -7668,9 +8000,11 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
     // reserved to sit blank any more (there used to be three fixed rows, two
     // of them empty on a normal terminal); while a message is up the list
     // simply gives up one row for it, the way Browse does for its prompt.
-    const std::string hint = (history_tab_ == 1)
-        ? "[\u2190\u2192] Tab | [1/2/3] Tab | [TAB] Switch pane | [\u2191\u2193] Move | [ENTER] Add to queue | [r] Flip sort | [ESC] Exit"
-        : "[\u2190\u2192/TAB] Tab | [1/2/3] Tab | [\u2191\u2193] Move | [r] Flip sort | [ESC] Exit";
+    const std::string hint = (history_tab_ == 1 && history_pane_ == 1)
+        ? "[\u2191\u2193\u2190\u2192] Pick a list | [ENTER] Add it to the queue | [TAB] Track list | [ESC] Leave the pane"
+        : (history_tab_ == 1)
+        ? "[\u2190\u2192] Switch Tab | [1/2/3] Tab | [TAB] Smart history pane | [\u2191\u2193] Move | [ENTER] Play | [r] Flip sort | [ESC] Exit"
+        : "[\u2190\u2192] Switch Tab | [1/2/3] Tab | [\u2191\u2193] Move | [ENTER] Play | [ESC] Exit";
     std::vector<std::string> hint_lines(1);
     size_t pos = 0;
     for (;;) {
@@ -7690,12 +8024,12 @@ void App::build_history_screen(std::ostringstream& frame, int W, int target_heig
     // what clamp_output_rows() keeps, target_height is what the other
     // overlays use. 2 = the panel's own border rows.
     int budget = std::min(target_height, term_rows_ - 1);
-    // Top Tracks carries a second pane (ADD TOP TRACKS TO QUEUE: four option
-    // rows + its own two border rows) below the list, so the list gives those
+    // Top Tracks carries a second pane (ADD SMART HISTORY TO QUEUE: a title
+    // row + four option rows + its own two border rows) below the list, so the list gives those
     // rows up -- the whole tab still adds up to `budget` lines (29 on a
     // 30-line terminal). No upper cap on the list: it fills a maximised window.
     const bool top_tab = (history_tab_ == 1);
-    const int add_body = 4;                       // Top 10 / 25 / 50 / 100
+    const int add_body = 5;                       // column titles + 4 rows of lists
     const int add_rows = top_tab ? add_body + 2 : 0;
     int panel_h = std::max(top_tab ? 3 : 6, budget - fixed_rows - 2 - legend_rows - status_rows - add_rows);
     for (const auto& l : build_history_panel(W, panel_h)) frame << l << "\n";
@@ -7885,8 +8219,10 @@ std::vector<std::string> App::build_history_panel(int total_width, int height) {
     return out;
 }
 
-// Top Tracks tab, second pane: one row per selectable count. The cursor is
-// only drawn while this pane has focus (history_pane_ == 1).
+// Top Tracks tab, second pane: ADD SMART HISTORY TO QUEUE, a 4 x 4 grid of
+// lists (kSmartLabels) under a row of column titles, the columns split by the
+// list separator in the border colour. The cursor is only drawn while this
+// pane has focus (history_pane_ == 1).
 std::vector<std::string> App::build_history_add_panel(int total_width, int height) const {
     const int inner = std::max(20, total_width - 4);
     std::string border_ansi = ansi_for(settings_.border_color, false);
@@ -7894,21 +8230,36 @@ std::vector<std::string> App::build_history_add_panel(int total_width, int heigh
     const std::string bar = border_ansi + settings_.box_vertical + "\x1b[0m";
     const std::string R = "\x1b[0m";
     std::vector<std::string> out;
-    out.push_back(box_top("ADD TOP TRACKS TO QUEUE", total_width, border_ansi));
+    out.push_back(box_top(std::string("ADD SMART HISTORY TO QUEUE") + (history_pane_ == 1 ? " ◀" : ""),
+                          total_width, border_ansi));
 
-    const int played = static_cast<int>(history_top_view_.size()); // distinct titles, whatever the sort
+    const std::string sep_txt = " " + (settings_.list_separator.empty() ? std::string("|") : settings_.list_separator) + " ";
+    const int sep_w = display_width(sep_txt);
+    const int col_w = std::max(4, (inner - 3 * sep_w) / 4);
+    const int last_w = std::max(4, inner - 3 * sep_w - 3 * col_w);   // the last column takes the rounding rest
+    const std::string sep = border_ansi + sep_txt + R;
     const bool focused = (history_pane_ == 1);
+    const int played = static_cast<int>(history_top_view_.size()); // distinct titles, whatever the sort
     for (int i = 0; i < std::max(1, height); ++i) {
-        std::string text, sgr;
-        if (i < 4) {
-            const int n = kHistoryAddCounts[i];
-            text = " Top " + std::to_string(n) + " tracks";
-            if (played == 0) text += "  (nothing played yet)";
-            else if (played < n) text += "  (only " + std::to_string(played) + " played so far)";
-            if (focused && i == history_add_sel_)
-                sgr = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
+        std::string line;
+        for (int c = 0; c < 4; ++c) {
+            const int w = (c == 3) ? last_w : col_w;
+            std::string text, sgr;
+            if (i == 0) {
+                text = kSmartColTitles[c];
+                sgr = header_sgr(settings_);
+            } else if (i <= 4) {
+                const int row = i - 1;
+                text = kSmartLabels[c][row];
+                if (c == 0 && played < kHistoryAddCounts[row])
+                    text += played == 0 ? " (none yet)" : " (" + std::to_string(played) + ")";
+                if (focused && c == history_add_col_ && row == history_add_sel_)
+                    sgr = cursor_sgr(settings_.list_cursor_color, settings_.list_cursor_bg_color);
+            }
+            if (c > 0) line += sep;
+            line += sgr + pad_right(truncate_str(text, w), w) + R;
         }
-        out.push_back(bar + " " + sgr + pad_right(truncate_str(text, inner), inner) + R + " " + bar);
+        out.push_back(bar + " " + line + " " + bar);
     }
     out.push_back(box_bottom(total_width, "", border_ansi_bottom));
     return out;
@@ -8486,6 +8837,344 @@ void App::build_console_screen(std::ostringstream& frame, int W, int target_heig
 // Cheatsheet overlay (HKeyCheatsheet)
 // ---------------------------------------------------------------------
 
+// ---------------------------------------------------------------------
+// Karaoke overlay (Mode::Karaoke, HKeyKaraoke = "k")
+// ---------------------------------------------------------------------
+
+// The karaoke art on the left (braille, 30 rows x 28 cells). Blank U+2800
+// cells stay uncoloured; everything else wears the disk colours with a
+// moving colour wave, like the radio's ON AIR sign.
+static constexpr int kKaraokeArtW = 28;
+static constexpr int kKaraokeArtRows = 30;
+static const char* const kKaraokeArt[kKaraokeArtRows] = {
+    "⠀⠀⠀⢠⡞⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⢦⠀⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⢀⡠⠤⡆⠀⠀⠀⠀⠀⠀⠀⢀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⢸⠀⢀⡇⠀⠀⠀⠀⠀⠀⢤⠜⠣⡤⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⢀⡤⣼⠀⠻⠃⠀⠀⠀⠀⠀⠀⠠⠕⠺⠄⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠈⠉⠁⠀⠀⠀⠀⣿⣿⡆⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⣿⣿⣷⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠉⠉⣿⣿⡿⠉⢹⣿⣿⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⢀⣼⣿⡟⠁⠀⢸⣿⡿⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠸⣿⡿⠋⠀⢾⣿⣿⣿⠃⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠉⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⢰⣿⣿⣿⣿⣿⣿⡷⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⢀⣤⣤⣤⣤⣤⣤⣤⣤⡄⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠈⠛⠛⠛⠛⠛⢻⣿⣿⠇⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⣀⣴⣾⣿⠏⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠰⣿⣿⠿⠋⠁⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⢠⣤⣄⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⢀⣤⣤⣤⣤⣼⣿⣿⣤⣤⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠈⠛⠛⢻⣿⣿⣼⣿⠛⠛⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⢀⣴⣿⣿⢿⣿⣿⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠸⣿⡿⠛⣡⣼⣿⡟⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠛⠛⠛⠁⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⣰⣿⣷⠀⠀⠀⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⣰⣿⣿⣿⣿⣿⣿⣿⣿⠆⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⢾⣿⡟⠁⠀⣹⣿⡏⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠉⠀⠀⣠⣿⣿⠁⠀⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⣤⣾⣿⡿⠁⠀⠀⢰⠲⣄⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠈⠛⠁⠀⠀⠀⠀⠸⠀⡸⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣰⠒⡇⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⢸⡇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠀⠀⠀⠀⠀⢸⡇⠀⠀⠀⠀",
+    "⠀⠀⠀⠈⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠛⠋⠀⠀⠀⠀⠀",
+};
+
+// Decodes UTF-8 into code points (invalid bytes become U+FFFD, which is not in the font).
+static std::vector<char32_t> karaoke_codepoints(const std::string& s) {
+    std::vector<char32_t> out;
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        int len = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 0;
+        if (len == 0 || i + static_cast<size_t>(len) > s.size()) { out.push_back(0xFFFD); ++i; continue; }
+        char32_t cp = len == 1 ? c : len == 2 ? (c & 0x1F) : len == 3 ? (c & 0x0F) : (c & 0x07);
+        for (int k = 1; k < len; ++k) cp = (cp << 6) | (static_cast<unsigned char>(s[i + static_cast<size_t>(k)]) & 0x3F);
+        out.push_back(cp);
+        i += static_cast<size_t>(len);
+    }
+    return out;
+}
+
+// One lyric line in BIG letters (karaoke lyrics size 2..5): the built-in 5x7
+// pixel font (karaoke_font.h) scaled by `scale` = size - 1 and drawn in
+// braille, so a letter is 3*scale columns wide and 2*scale rows tall. Words
+// wrap like the normal lyrics, each row is centred in `width` columns, and the
+// colours follow the same rules as render_lyric_line_wrapped() (sung words in
+// the active-word colour, the word being sung bold, the rest of the active
+// line in the active-line colour, other lines in the inactive colour).
+// Returns false -- and leaves `out` alone -- when the line holds a character
+// the font does not have (CJK, emoji, ...); the caller then shows that line
+// as normal text instead.
+static bool render_big_lyric_line(const LyricLine& line, double elapsed, int width, bool is_active, int scale,
+                                  const Settings& st, std::vector<std::string>& out) {
+    struct Word { std::vector<char32_t> cps; double t; bool has_ts; };
+    std::vector<Word> words;
+    if (!line.words.empty()) {
+        for (const auto& wt : line.words) {
+            std::istringstream iss(wt.second);
+            std::string w;
+            while (iss >> w) words.push_back({karaoke_codepoints(w), wt.first, true});
+        }
+    } else {
+        std::istringstream iss(line.full_text);
+        std::string w;
+        while (iss >> w) words.push_back({karaoke_codepoints(w), line.start_time, false});
+    }
+    for (const auto& w : words) for (char32_t cp : w.cps) if (!karaoke_glyph(cp)) return false;
+    if (words.empty()) { out.push_back(std::string(static_cast<size_t>(std::max(0, width)), ' ')); return true; }
+
+    const int char_cols = 3 * scale;                       // 6 px (5 + 1 gap) * scale / 2 px per braille cell
+    const int per_row = std::max(1, width / char_cols);    // letters per output row
+    // State per word: 0 inactive line, 1 active line (not sung yet), 2 sung, 3 being sung.
+    int singing = -1;
+    if (is_active) for (size_t i = 0; i < words.size(); ++i) if (words[i].has_ts && words[i].t <= elapsed) singing = static_cast<int>(i);
+    auto state_of = [&](size_t i) -> int {
+        if (!is_active) return 0;
+        if (!words[i].has_ts) return 1;
+        if (static_cast<int>(i) == singing) return 3;
+        return words[i].t <= elapsed ? 2 : 1;
+    };
+    const std::string sgr[4] = {
+        ansi_for(st.inactive_line_color) + bg_ansi_for(st.inactive_line_bg_color),
+        ansi_for(st.active_line_color) + bg_ansi_for(st.active_line_bg_color),
+        ansi_for(st.active_word_color) + bg_ansi_for(st.active_word_bg_color),
+        "\x1b[1m" + ansi_for(st.active_word_color) + bg_ansi_for(st.active_word_bg_color),
+    };
+
+    // Word wrap into rows of at most per_row letters (a word longer than a row is split).
+    struct Piece { std::vector<char32_t> cps; int state; };
+    std::vector<std::vector<Piece>> rows(1);
+    int used = 0;
+    for (size_t i = 0; i < words.size(); ++i) {
+        std::vector<char32_t> rest = words[i].cps;
+        while (!rest.empty()) {
+            const int need = used + (used > 0 ? 1 : 0) + static_cast<int>(rest.size());   // row length with this word
+            if (need <= per_row) {
+                if (used > 0) { rows.back().push_back({{U' '}, 0}); ++used; }
+                rows.back().push_back({rest, state_of(i)});
+                used += static_cast<int>(rest.size());
+                rest.clear();
+            } else if (used > 0) {
+                rows.emplace_back(); used = 0;
+            } else {
+                rows.back().push_back({std::vector<char32_t>(rest.begin(), rest.begin() + per_row), state_of(i)});
+                rest.erase(rest.begin(), rest.begin() + per_row);
+                rows.emplace_back(); used = 0;
+            }
+        }
+    }
+    if (rows.back().empty() && rows.size() > 1) rows.pop_back();
+
+    for (const auto& row : rows) {
+        // Pixel grid of the row: 6 * scale px per letter, 8 * scale px tall; each pixel keeps its word's state (+1, 0 = off).
+        int n = 0;
+        for (const auto& p : row) n += static_cast<int>(p.cps.size());
+        const int pw = n * 6 * scale, ph = 8 * scale;
+        std::vector<int8_t> px(static_cast<size_t>(pw * ph), 0);
+        int x0 = 0;
+        for (const auto& p : row) {
+            for (char32_t cp : p.cps) {
+                const uint8_t* g = karaoke_glyph(cp);
+                for (int gy = 0; g && gy < 8; ++gy)
+                    for (int gx = 0; gx < 5; ++gx)
+                        if (g[gy] & (1 << (4 - gx)))
+                            for (int sy = 0; sy < scale; ++sy)
+                                for (int sx = 0; sx < scale; ++sx)
+                                    px[static_cast<size_t>((gy * scale + sy) * pw + x0 + gx * scale + sx)] = static_cast<int8_t>(p.state + 1);
+                x0 += 6 * scale;
+            }
+        }
+        const int cols = (pw + 1) / 2;
+        const int left = std::max(0, (width - cols) / 2);
+        static const int kBit[4][2] = {{0x01, 0x08}, {0x02, 0x10}, {0x04, 0x20}, {0x40, 0x80}};
+        for (int cy = 0; cy < (ph + 3) / 4; ++cy) {
+            std::string line(static_cast<size_t>(left), ' ');
+            std::string last;
+            for (int cx = 0; cx < cols; ++cx) {
+                int bits = 0, state = 0;
+                for (int dy = 0; dy < 4; ++dy)
+                    for (int dx = 0; dx < 2; ++dx) {
+                        const int x = cx * 2 + dx, y = cy * 4 + dy;
+                        if (x >= pw || y >= ph) continue;
+                        const int v = px[static_cast<size_t>(y * pw + x)];
+                        if (v) { bits |= kBit[dy][dx]; state = std::max(state, v); }
+                    }
+                if (!bits) {
+                    if (!last.empty()) { line += "\x1b[0m"; last.clear(); }
+                    line += ' ';
+                    continue;
+                }
+                const std::string& a = sgr[state - 1];
+                if (a != last) { line += "\x1b[0m" + a; last = a; }
+                const int cp = 0x2800 + bits;
+                line += static_cast<char>(0xE0 | (cp >> 12));
+                line += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+                line += static_cast<char>(0x80 | (cp & 0x3F));
+            }
+            if (!last.empty()) line += "\x1b[0m";
+            line += std::string(static_cast<size_t>(std::max(0, width - left - cols)), ' ');
+            out.push_back(line);
+        }
+    }
+    return true;
+}
+
+void App::build_karaoke_screen(std::ostringstream& frame, int W, int H) {
+    const std::string R = "\x1b[0m";
+    const std::string border = ansi_for(settings_.border_color, false);
+    const std::string border_bottom = ansi_for(settings_.border_color_bottom, false);
+    const std::string bar = border + settings_.box_vertical + R;
+    H = std::max(8, H);
+    W = std::max(20, W);
+    const int body_h = H - 3;                       // top border, bottom border, legend
+    const int inner = W - 4;
+
+    // --- title: what is playing ---
+    std::string title = "KARAOKE";
+    if (has_track_) {
+        std::string name = metadata_.name.empty() || metadata_.name == "-" ? path_utf8(current_path_.stem()) : metadata_.name;
+        title += " · " + name;
+        if (!metadata_.artist.empty() && metadata_.artist != "-") title += " – " + metadata_.artist;
+    }
+    frame << box_top(truncate_str(title, std::max(10, W - 8)), W, border) << "\n";
+
+    // --- layout: the art on BOTH sides, 4 columns between art and lyrics, the lyrics centred in between. Recomputed
+    // every frame from the terminal size, so a resize simply re-flows everything. When the lyrics would get narrower
+    // than 30 columns the two pictures are left out and the lyrics take the whole width.
+    constexpr int kGap = 4;
+    const bool show_art = inner - 2 * (kKaraokeArtW + kGap) >= 30;
+    const int side_w = show_art ? kKaraokeArtW + kGap : 0;     // art + gap, on each side
+    const int lyr_w = inner - 2 * side_w;
+
+    std::vector<std::string> art_rows(static_cast<size_t>(body_h), std::string(static_cast<size_t>(kKaraokeArtW), ' '));
+    if (show_art) {
+        // Wave from the left to the right edge: the gradient runs disk TOP colour -> BOTTOM colour across the art,
+        // a ripple rides on it and moves to the right (0.25 cycles per second, the ON AIR sign's default).
+        const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        const float phase = static_cast<float>(std::fmod(now * 0.25, 1000.0));
+        const std::string c_end = settings_.disk_color_gradient && !settings_.disk_color_end.empty()
+                                  ? settings_.disk_color_end : settings_.disk_color;
+        const int first = std::max(0, (kKaraokeArtRows - body_h) / 2);           // crop evenly on a short terminal
+        const int top = std::max(0, (body_h - kKaraokeArtRows) / 2);             // centre on a tall one
+        for (int y = first; y < kKaraokeArtRows && top + (y - first) < body_h; ++y) {
+            std::string line, last;
+            int x = 0;
+            const char* p = kKaraokeArt[y];
+            while (*p && x < kKaraokeArtW) {
+                const unsigned char c0 = static_cast<unsigned char>(*p);
+                const int len = c0 < 0x80 ? 1 : (c0 >> 5) == 0x6 ? 2 : (c0 >> 4) == 0xE ? 3 : 4;
+                const std::string g(p, static_cast<size_t>(len));
+                p += len;
+                if (g == "⠀" || g == " ") { line += ' '; ++x; continue; }
+                const float d = static_cast<float>(x) / static_cast<float>(kKaraokeArtW - 1);
+                const float ripple = 0.5f + 0.5f * std::sin(6.2831853f * (d * 1.5f - phase));
+                float t = 0.65f * d + 0.35f * ripple;
+                t = std::round(std::clamp(t, 0.0f, 1.0f) * 32.0f) / 32.0f;
+                const std::string a = gradient_ansi(settings_.disk_color, c_end, t);
+                if (a != last) { line += a; last = a; }
+                line += g;
+                ++x;
+            }
+            if (!last.empty()) line += R;
+            line += std::string(static_cast<size_t>(std::max(0, kKaraokeArtW - x)), ' ');
+            art_rows[static_cast<size_t>(top + (y - first))] = line;
+        }
+    }
+
+    // --- centre: the lyrics, karaoke style ---
+    std::vector<std::string> lyr_rows(static_cast<size_t>(body_h), std::string(static_cast<size_t>(lyr_w), ' '));
+    auto centred = [&](const std::string& text, const std::string& sgr) {
+        const std::string t = truncate_str(text, lyr_w);
+        const int pad = std::max(0, (lyr_w - display_width(t)) / 2);
+        return sgr + std::string(static_cast<size_t>(pad), ' ') + t + R + std::string(static_cast<size_t>(std::max(0, lyr_w - pad - display_width(t))), ' ');
+    };
+    std::vector<LyricLine> lines;
+    double delay = 0.0;
+    std::string message;
+    {
+        std::lock_guard<std::mutex> lock(lyrics_mutex_);
+        if (settings_.element_lyrics && lyrics_ready_) {
+            lines = lyrics_result_.lines;
+            delay = lyrics_result_.delay;
+            message = lyrics_result_.message;
+        }
+    }
+    const double elapsed = has_track_ ? player_.poll_elapsed() : 0.0;
+    if (!has_track_) {
+        message = "Nothing is playing -- start a track and the lyrics appear here.";
+    } else if (!settings_.element_lyrics) {
+        message = "The lyrics engine is off -- close this overlay and press [" + hotkey_text("HKeyToggleLyrics", ".") + "] until the lyrics come back.";
+    } else if (!lyrics_ready_) {
+        message = "fetching lyrics ...";
+    } else if (lines.empty() && message.empty()) {
+        message = "No lyrics found for this track.";
+    }
+    const int size = std::clamp(settings_.karaoke_lyrics_size, 1, 5);
+    if (lines.empty()) {
+        lyr_rows[static_cast<size_t>(body_h / 2)] = centred(message, legend_sgr(settings_));
+    } else {
+        Settings ks = settings_;          // karaoke look: centred, whole lines, the sung words highlighted
+        ks.lyrics_alignment = 0;
+        ks.lyrics_animation = 0;
+        const double lt = elapsed - delay;
+        bool synced = false;
+        for (const auto& l : lines) if (l.start_time > 0.0) { synced = true; break; }
+        int active = 0;
+        if (synced) {
+            for (size_t i = 0; i < lines.size(); ++i) { if (lines[i].start_time <= lt) active = static_cast<int>(i); else break; }
+        } else if (total_sec_ > 0) {   // plain lyrics: scroll along with the song
+            active = std::clamp(static_cast<int>(elapsed / static_cast<double>(total_sec_) * lines.size()), 0, static_cast<int>(lines.size()) - 1);
+        }
+        // One lyric line -> its rows: big letters from size 2 on (normal text for a line the font cannot draw).
+        auto render_line = [&](int li) {
+            const bool is_active = synced && li == active;
+            const double t = (!synced && li == active) ? 1e12 : lt;   // no timing: the current line in the active colour
+            const bool hl = is_active || (!synced && li == active);
+            std::vector<std::string> rows;
+            if (size >= 2 && render_big_lyric_line(lines[static_cast<size_t>(li)], t, lyr_w, hl, size - 1, ks, rows)) return rows;
+            return render_lyric_line_wrapped(lines[static_cast<size_t>(li)], t, lyr_w, hl, ks);
+        };
+        // The lines around the active one, a blank row between two lines; the active one sits in the middle.
+        std::vector<std::string> flat;
+        int active_row = 0, active_count = 1;
+        const int line_rows = size >= 2 ? 2 * (size - 1) + 1 : 2;   // rough height of one line incl. the gap
+        const int reach = body_h / line_rows + 1;
+        const int lo = std::max(0, active - reach), hi = std::min(static_cast<int>(lines.size()) - 1, active + reach);
+        for (int li = lo; li <= hi; ++li) {
+            auto rows = render_line(li);
+            if (li == active) { active_row = static_cast<int>(flat.size()); active_count = static_cast<int>(rows.size()); }
+            for (auto& r : rows) flat.push_back(std::move(r));
+            flat.push_back(std::string(static_cast<size_t>(lyr_w), ' '));
+        }
+        const int start = active_row + active_count / 2 - body_h / 2;
+        for (int r = 0; r < body_h; ++r) {
+            const int idx = start + r;
+            if (idx >= 0 && idx < static_cast<int>(flat.size())) lyr_rows[static_cast<size_t>(r)] = flat[static_cast<size_t>(idx)];
+        }
+    }
+
+    const std::string gap(static_cast<size_t>(kGap), ' ');
+    for (int r = 0; r < body_h; ++r) {
+        frame << bar << " ";
+        if (show_art) frame << art_rows[static_cast<size_t>(r)] << gap;
+        frame << lyr_rows[static_cast<size_t>(r)];
+        if (show_art) frame << gap << art_rows[static_cast<size_t>(r)];
+        frame << " " << bar << "\n";
+    }
+
+    std::string footer;
+    if (has_track_) footer = "[ " + format_mmss(elapsed) + " / " + format_mmss(static_cast<double>(total_sec_)) + " ]";
+    if (std::chrono::steady_clock::now() < karaoke_flash_until_)
+        footer += std::string(footer.empty() ? "" : "  ") + "[ lyrics size " + std::to_string(size) + " / 5 ]";
+    frame << box_bottom(W, footer, border_bottom) << "\n";
+    const std::string up = mode_switch_key_label();
+    const std::string down = up == "*" ? "_" : up == "SHIFT and +" ? "SHIFT and -" : "SHIFT+-";
+    const std::string legend = "[ESC/" + hotkey_text("HKeyKaraoke", "k") + "] Close | [" + up + " / " + down + "] Lyrics size | ["
+        + hotkey_text("HKeyTogglePlayPause", "p") + "] Play/Pause | [" + hotkey_text("HKeyPlayNextSong", "n") + "/"
+        + hotkey_text("HKeyPlayPreviousSong", "b") + "] Next/Prev | [←→] Seek | [" + hotkey_text("HKeyIncreaseVolume", "+") + "/"
+        + hotkey_text("HKeyDecreaseVolume", "-") + "] Volume | [" + hotkey_text("HKeyToggleMute", "x") + "] Mute";
+    frame << legend_sgr(settings_) << truncate_str(legend, W) << R;
+}
+
 void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
     std::string border = ansi_for(settings_.border_color, false);
     frame << box_top("CHEATSHEET", W, border) << "\n";
@@ -8541,6 +9230,8 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyClearFilter", "Clear filter"},
         {nullptr, "HKeyCycleSortMode", "Cycle local list sort mode"},
         {nullptr, "HKeyRefreshUi", "Refresh UI (redraw)"},
+        {nullptr, "HKeyKaraoke", "Karaoke overlay: the lyrics over the whole screen, sung words highlighted (toggle; playback keys keep working)"},
+        {nullptr, "#SHIFT and + / SHIFT and -", "Karaoke overlay: lyrics bigger / smaller, sizes 1-5 (the characters * and _; saved when the overlay closes)"},
         {nullptr, "HKeyToggleWaveform", "Toggle waveform style (raw/smooth)"},
         {nullptr, "HKeyToggleLyrics", "Cycle lyrics area: lyrics / sphere / oscilloscope"},
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
@@ -8584,6 +9275,7 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#TAB", "Cycle focus (name field / library picker / track list)"},
         {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
         {nullptr, "#ENTER", "Add hovering track to playlist / load selected playlist"},
+        {nullptr, "#e", "Saved Playlists tab: export the hovered playlist as M3U8 (default) or M3U -- overlay with folder and format"},
         {nullptr, "#4 / 5", "Move the hovering track up/down"},
         {nullptr, "#D / DEL / BACKSPACE", "Remove hovering track / delete selected playlist"},
         {nullptr, "#CTRL+s", "Save the playlist"},
@@ -8622,9 +9314,12 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#CTRL+SHIFT+u", "Undo the last key change or reset (up to 5, newest first)"},
         // --- Listening history ---
         {"HISTORY", "HKeyHistory", "Listening history: last plays, top tracks, habits"},
-        {nullptr, "#1 / 2 / 3", "History overlay: switch tab"},
-        {nullptr, "#ARROWS", "History overlay: move the cursor / scroll Habits"},
-        {nullptr, "#r", "History overlay: most-played first <-> least-played first"},
+        {nullptr, "#LEFT/RIGHT  1 / 2 / 3", "History overlay: switch tab (TAB never switches tabs)"},
+        {nullptr, "#UP/DOWN  ENTER", "History overlay: move the cursor / scroll Habits; ENTER plays the hovered track"},
+        {nullptr, "#r", "History overlay: most-played first <-> least-played first (Top Tracks)"},
+        {nullptr, "#TAB", "Top Tracks tab: track list <-> ADD SMART HISTORY TO QUEUE pane"},
+        {nullptr, "#ARROWS  ENTER", "Smart history pane: pick a list (Top 10-100, top of the week / month / quarter / year, morning / day / evening / night, newly added, least played) / add it to the queue"},
+        {nullptr, "#ESC", "Smart history pane: back to the track list (ESC again closes the history)"},
         // --- Equalizer ---
         {"EQUALIZER", "HKeyEqualizer", "Equalizer: 10 bands, presets, custom presets, on/off"},
         {nullptr, "#LEFT / RIGHT", "Equalizer: select band"},
@@ -8633,7 +9328,6 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "#SPACE / 0 / r", "Equalizer: on-off / zero the band / reset to Flat"},
         {nullptr, "#s", "Equalizer: save the current curve as a custom preset (ENTER saves, ESC cancels)"},
         {nullptr, "#DEL / x", "Equalizer: delete the selected custom preset (press twice)"},
-        {nullptr, "#TAB / ENTER", "Top Tracks tab: switch pane / add top 10-25-50-100 to queue"},
         // --- Downloads ---
         {"DOWNLOADS", "HKeyDownloadStream", "Save stream to the download folder (Settings > Download Path, else .cache/mousiki)"},
     };
@@ -10151,6 +10845,7 @@ std::string App::render_frame(TerminalIO& term) {
             case Mode::Playlist: return 4;
             case Mode::MetaEdit: return 5;
             case Mode::History: return 6;
+            case Mode::Karaoke: return 7;
         }
         return 0;
     };
@@ -10214,11 +10909,27 @@ std::string App::render_frame(TerminalIO& term) {
         return fullscreen_out(frame);
     }
 
+    if (mode_ == Mode::Karaoke) {
+        std::ostringstream frame;
+        frame << "\x1b[2J\x1b[H\x1b[?25l";
+        build_karaoke_screen(frame, W, term_rows_ - 1);
+        return fullscreen_out(frame);
+    }
+
     if (mode_ == Mode::Playlist) {
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_playlist_screen(frame, W, overlay_budget(W));
-        return fullscreen_out(frame);
+        std::string out = fullscreen_out(frame);
+        if (playlist_export_open_) {
+            // The export overlay floats on top (absolute cursor positions, no newlines) -- appended AFTER the row clamp,
+            // which would otherwise cut it off with everything past the last screen row.
+            std::ostringstream panel;
+            const int pw = std::clamp(W - 10, 50, 100);
+            draw_floating_panel(panel, build_playlist_export_panel(pw), pw, W);
+            out += panel.str();
+        }
+        return out;
     }
 
     if (mode_ == Mode::MetaEdit) {
@@ -10575,8 +11286,10 @@ int App::run() {
         // win_poll_key()/poll_key() for how it arrives as kKeyCtrlC/X/V.
         const bool playlist_text_field =
             mode_ == Mode::Playlist &&
-            ((playlist_tab_ == 0 && playlist_edit_focus_ <= 1) ||
-             (playlist_tab_ == 1 && playlist_manage_focus_ == 0));
+            ((playlist_export_open_ && playlist_export_field_ == 0) ||
+             (!playlist_export_open_ &&
+              ((playlist_tab_ == 0 && playlist_edit_focus_ <= 1) ||
+               (playlist_tab_ == 1 && playlist_manage_focus_ == 0))));
         set_text_entry(mode_ == Mode::Search ||
                        mode_ == Mode::ColorEdit ||
                        (mode_ == Mode::MetaEdit && meta_tab_ == 0 &&
