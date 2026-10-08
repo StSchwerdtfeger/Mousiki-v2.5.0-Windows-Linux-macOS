@@ -188,8 +188,9 @@ endif()
 
 
 # ---------------------------------------------------------------------------
-# Radio mode (src_radio/): part of the SAME program as the music player. Ctrl+Shift+M ends the running mode
-# completely (audio device, threads, caches) and starts the other one -- see src/main.cpp and src/mode_switch.h.
+# Radio mode (src_radio/): part of the SAME program as the music player. SHIFT and + (the '*' character) switches
+# modes: the radio ends completely (audio device, threads, caches), the player is only suspended while the radio
+# runs -- see src/main.cpp and src/mode_switch.h.
 # The radio has its own audio path (ffmpeg -> ring buffer -> its own miniaudio device) and shares only the UI
 # plumbing (settings, terminal I/O, process spawning) and the visualizers with the player -- not Player, not
 # StreamingPcm. Its data files (stations.txt, radio_config.txt) now live in the project root.

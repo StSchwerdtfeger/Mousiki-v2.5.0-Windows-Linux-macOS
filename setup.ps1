@@ -26,12 +26,18 @@
 
 .PARAMETER BuildType
     Release (default) or Debug.
+
+.PARAMETER NoInstall
+    Don't create the launchers. By default the commands "mousiki" and "lala"
+    are created in %LOCALAPPDATA%\Mousiki\bin, which is added to your user
+    PATH, so both start the app from any (new) terminal.
 #>
 [CmdletBinding()]
 param(
     [switch]$SkipDeps,
     [ValidateSet('Release','Debug')]
-    [string]$BuildType = 'Release'
+    [string]$BuildType = 'Release',
+    [switch]$NoInstall
 )
 
 $ErrorActionPreference = 'Stop'
@@ -136,9 +142,32 @@ $exe = Get-ChildItem -Path $build -Filter 'mousiki.exe' -Recurse |
 
 if (-not $exe) { throw "Build reported success but mousiki.exe was not found under $build" }
 
+# ---------------------------------------------------------------------------
+# Launchers: "mousiki" and "lala" (skip with -NoInstall)
+# ---------------------------------------------------------------------------
+# Two small .cmd files in %LOCALAPPDATA%\Mousiki\bin that start the built exe
+# (which finds scripts\ next to itself); that folder goes on the user PATH.
+if (-not $NoInstall) {
+    $binDir = Join-Path $env:LOCALAPPDATA 'Mousiki\bin'
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    foreach ($name in 'mousiki', 'lala') {
+        $launcher = Join-Path $binDir "$name.cmd"
+        Set-Content -Path $launcher -Encoding ascii -Value "@echo off`r`n`"$($exe.FullName)`" %*"
+        Write-Step "Launcher created: $launcher"
+    }
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $parts = @($userPath -split ';' | Where-Object { $_ -ne '' })
+    if ($parts -notcontains $binDir) {
+        [Environment]::SetEnvironmentVariable('Path', (($parts + $binDir) -join ';'), 'User')
+        Write-Step "Added $binDir to your user PATH (new terminals pick it up)"
+    }
+    if (($env:PATH -split ';') -notcontains $binDir) { $env:PATH = "$env:PATH;$binDir" }
+}
+
 Write-Host ""
 Write-Host "Built: $($exe.FullName)" -ForegroundColor Green
 Write-Host "Run it with:  & '$($exe.FullName)'"
+if (-not $NoInstall) { Write-Host "or simply:    mousiki   (or: lala)   -- in a new terminal" }
 Write-Host ""
 Write-Host "Config will be generated at: $env:USERPROFILE\.config\mousiki\config.txt"
 Write-Host "Use Windows Terminal, not the legacy console window."

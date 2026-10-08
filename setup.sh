@@ -33,7 +33,9 @@
 #   --skip-deps         Configure and build only; don't touch the package manager / pip.
 #   --debug             Debug build (default: Release).
 #   --build-type TYPE   Release or Debug.
-#   --install           Also create a launcher "mousiki" in ~/.local/bin.
+#   --no-install        Don't create the launchers. By default the commands "mousiki"
+#                       and "lala" are created in ~/.local/bin (both start the app).
+#   --install           Create the launchers (the default; kept for older scripts).
 #   -y, --yes           Don't ask before installing packages (uses sudo if needed).
 #   -h, --help          Show this help.
 
@@ -45,7 +47,7 @@ BUILD_DIR="$ROOT/build"
 
 SKIP_DEPS=0
 BUILD_TYPE="Release"
-DO_INSTALL=0
+DO_INSTALL=1
 ASSUME_YES=0
 
 # ---------------------------------------------------------------------------
@@ -80,6 +82,7 @@ while [ $# -gt 0 ]; do
             esac
             ;;
         --install)    DO_INSTALL=1 ;;
+        --no-install) DO_INSTALL=0 ;;
         -y|--yes)     ASSUME_YES=1 ;;
         -h|--help)    usage; exit 0 ;;
         *)            die "unknown option: $1 (try --help)" ;;
@@ -382,17 +385,20 @@ if have ffmpeg && ! ffmpeg -hide_banner -encoders 2>/dev/null | grep -q libmp3la
 fi
 
 # ---------------------------------------------------------------------------
-# Optional launcher
+# Launchers: "mousiki" and "lala" (skip with --no-install)
 # ---------------------------------------------------------------------------
-# A wrapper script rather than a symlink: macOS' executable-path lookup does not
+# Wrapper scripts rather than symlinks: macOS' executable-path lookup does not
 # resolve symlinks, so a symlinked binary would not find its scripts/ folder.
+# Both names start the same program.
 if [ "$DO_INSTALL" -eq 1 ]; then
     BIN_DIR="$HOME/.local/bin"
     mkdir -p "$BIN_DIR"
-    LAUNCHER="$BIN_DIR/mousiki"
-    printf '#!/bin/sh\nexec "%s" "$@"\n' "$EXE" > "$LAUNCHER"
-    chmod +x "$LAUNCHER"
-    step "Launcher created: $LAUNCHER"
+    for NAME in mousiki lala; do
+        LAUNCHER="$BIN_DIR/$NAME"
+        printf '#!/bin/sh\nexec "%s" "$@"\n' "$EXE" > "$LAUNCHER"
+        chmod +x "$LAUNCHER"
+        step "Launcher created: $LAUNCHER"
+    done
     case ":$PATH:" in
         *":$BIN_DIR:"*) ;;
         *) warn "$BIN_DIR is not on your PATH. Add this to your shell profile:  export PATH=\"\$HOME/.local/bin:\$PATH\"" ;;
@@ -402,7 +408,7 @@ fi
 echo
 printf '%sBuilt: %s%s\n' "$C_GREEN" "$EXE" "$C_OFF"
 echo "Run it with:  '$EXE'"
-[ "$DO_INSTALL" -eq 1 ] && echo "or simply:    mousiki"
+[ "$DO_INSTALL" -eq 1 ] && echo "or simply:    mousiki   (or: lala)"
 echo
 echo "Config will be generated at: \$HOME/.config/mousiki/config.txt"
 echo "Radio mode settings: \$HOME/.config/mousiki/radio_config.txt (a default ships as radio_config.txt in the project folder)."
