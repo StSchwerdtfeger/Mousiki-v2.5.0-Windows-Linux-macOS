@@ -449,7 +449,6 @@ int win_poll_key() {
             if (k.wVirtualKeyCode == 'X') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
             if (k.wVirtualKeyCode == 'U') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
             if (k.wVirtualKeyCode == 'Z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
-            if (k.wVirtualKeyCode == 'M') { g_last_key_was_arrow = false; return kKeyCtrlShiftM; }
         }
     }
 
@@ -486,6 +485,7 @@ int win_poll_key() {
             if (k.wVirtualKeyCode == 'C' && (wc_ctrl == 0x03 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlC; }
             if (k.wVirtualKeyCode == 'X' && (wc_ctrl == 0x18 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlX; }
             if (k.wVirtualKeyCode == 'V' && (wc_ctrl == 0x16 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlV; }
+            if (k.wVirtualKeyCode == 'S' && (wc_ctrl == 0x13 || wc_ctrl == 0)) { g_last_key_was_arrow = false; return kKeyCtrlS; }
         }
     }
 

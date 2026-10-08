@@ -1173,6 +1173,7 @@ void App::resort_local_view_keep_selection() {
 }
 
 void App::settings_open() {
+    text_disengage();
     settings_snapshot_ = settings_;
     settings_snapshot_text_ = settings_to_text(settings_);
     settings_dirty_ = false;
@@ -2276,7 +2277,7 @@ void App::queue_to_playlist() {
     playlist_edit_dirty_ = true;
     playlist_status_ = "queue -> playlist: " + std::to_string(n) + " track" + (n == 1 ? "" : "s")
                      + (skipped > 0 ? " (" + std::to_string(skipped) + " online skipped)" : "")
-                     + " -- type a name, HOME saves";
+                     + " -- type a name, Ctrl+S saves";
 }
 
 // ---------------------------------------------------------------------
@@ -3396,7 +3397,6 @@ void App::start_online_track(const OnlineResult& result) {
 
 void App::handle_key(int key) {
     if (key == 0) return;
-    if (key == kKeyCtrlShiftM) { switch_mode_ = true; quit_ = true; return; }   // Ctrl+Shift+M: leave for the radio mode
 
     // A meta-editor confirmation -- Shift+B's AcoustID disclaimer (raised
     // here in Browse) or Ctrl+Shift+S/D raised from the menu -- swallows every
@@ -5404,6 +5404,7 @@ void App::playlist_refresh_manage_view() {
 // accident.
 void App::playlist_open_editor() {
     mode_ = Mode::Playlist;
+    text_disengage();
     playlist_tab_ = 0;
     playlist_edit_focus_ = 0;
     playlist_edit_name_.clear();
@@ -5429,6 +5430,7 @@ void App::playlist_load_into_editor(const std::string& name) {
     playlist_edit_track_selected_ = 0;
     playlist_tab_ = 0;
     playlist_edit_focus_ = 1;
+    text_disengage();
     playlist_edit_dirty_ = false; // freshly loaded from disk -- matches what's saved, nothing to lose yet
     playlist_status_ = "editing \"" + pl->name + "\" (" + std::to_string(pl->tracks.size()) + " tracks)";
 }
@@ -5547,30 +5549,37 @@ void App::handle_playlist_key(int key) {
         return;
     }
 
+    // Which text box (if any) has the keyboard right now -- the same owner
+    // names edit_focus() uses. Empty on the two plain lists.
+    const char* field = playlist_tab_ == 1 ? (playlist_manage_focus_ == 0 ? "playlist-manage-search" : "")
+                      : playlist_edit_focus_ == 0 ? "playlist-name"
+                      : playlist_edit_focus_ == 1 ? "playlist-lib-search" : "";
+
     if (key == 27) { // ESC
+        // First ESC after typing: leave the field (Left/Right switch tabs
+        // again, the text stays). Only an ESC outside a field leaves the menu.
+        if (*field && text_engaged(field)) { text_disengage(); return; }
         if (playlist_tab_ == 0 && playlist_edit_dirty_) { playlist_confirm_exit_ = true; return; }
         mode_ = Mode::Browse;
         return;
     }
-    if (key == kKeyHome) {
+    if (key == kKeyCtrlS) {
         if (playlist_tab_ == 0) playlist_save_current();
+        else playlist_status_ = "switch to Create/Edit (\u2190\u2192) to save a playlist";
         return;
     }
     // Arrows collapse to 'A'..'D' app-wide; last_key_was_arrow() is what
     // tells a real arrow from a typed capital.
     const bool arrow = last_key_was_arrow();
-    // Alt+Left/Right switch the two top-level tabs. This used to be plain
-    // Left/Right, but this screen starts in the name field (focus 0) where
-    // Left/Right has to stay the caret key -- and since the only way to
-    // move focus off the name field is Tab, which cycles within a tab
-    // rather than switching one, a plain arrow could only ever reach tab 1
-    // from the track list pane. Alt+Arrow is a modifier combination none
-    // of this screen's fields claims for anything (Shift+Left/Right marks
-    // text instead), so it now switches tabs the same way from every pane.
-    // (Ctrl+Arrow was tried first, but several terminals intercept
-    // Ctrl+Left/Right for their own shortcuts before the app ever sees it.)
-    if (key == kKeyAltLeft || key == kKeyAltRight) {
+    // Tab switch: plain Left/Right, as in the meta editor and Settings --
+    // EXCEPT while a text box is in use. A box only counts as in use once
+    // something was typed / edited in it (text_engage()); until then the
+    // arrows switch tabs, afterwards they move the caret, and ESC hands
+    // them back to the tabs. Alt+Left/Right keeps working from everywhere.
+    const bool lr = arrow && (key == 'C' || key == 'D');
+    if (key == kKeyAltLeft || key == kKeyAltRight || (lr && !(*field && text_engaged(field)))) {
         playlist_tab_ = (playlist_tab_ + 1) % 2;
+        text_disengage();
         if (playlist_tab_ == 1) playlist_refresh_manage_view();
         return;
     }
@@ -5580,6 +5589,7 @@ void App::handle_playlist_key(int key) {
         int total = static_cast<int>(playlist_manage_view_.size());
         if (key == 9) { // Tab -- search box <-> list
             playlist_manage_focus_ = (playlist_manage_focus_ == 0) ? 1 : 0;
+            text_disengage();
             return;
         }
         if (playlist_manage_focus_ == 0) { // search box -- filter, caret, marking, clipboard
@@ -5593,8 +5603,9 @@ void App::handle_playlist_key(int key) {
                 if (total > 0 && playlist_manage_selected_ < total - 1) ++playlist_manage_selected_;
                 return;
             }
-            if (key == '\r' || key == '\n') { playlist_manage_focus_ = 1; return; } // Enter: leave the box, take the list
+            if (key == '\r' || key == '\n') { playlist_manage_focus_ = 1; text_disengage(); return; } // Enter: leave the box, take the list
             edit_focus("playlist-manage-search", playlist_manage_query_);
+            text_engage("playlist-manage-search");
             if (edit_text_key(playlist_manage_query_, edit_caret_, edit_anchor_, key, 80, &playlist_status_))
                 playlist_refresh_manage_view();
             return;
@@ -5623,12 +5634,15 @@ void App::handle_playlist_key(int key) {
     // --- Tab 0: create/edit ---
     if (key == 9) { // Tab -- cycle focus: name field -> library picker -> track list -> ...
         playlist_edit_focus_ = (playlist_edit_focus_ + 1) % 3;
+        text_disengage();
         return;
     }
 
     if (playlist_edit_focus_ == 0) { // name field
-        if (key == '\r' || key == '\n') { playlist_edit_focus_ = 1; return; } // confirm name, jump to picking tracks
+        if (key == '\r' || key == '\n') { playlist_edit_focus_ = 1; text_disengage(); return; } // confirm name, jump to picking tracks
+        if (arrow && (key == 'A' || key == 'B')) return; // single line, nothing to move to
         edit_focus("playlist-name", playlist_edit_name_);
+        text_engage("playlist-name");
         // Caret, marking, clipboard and typing in one call -- Up/Down
         // arrows included (edit_text_key drops them, this box has no
         // vertical anything to navigate), where the old code had to
@@ -5650,6 +5664,7 @@ void App::handle_playlist_key(int key) {
         }
         if (key == '\r' || key == '\n') { playlist_add_hovering_to_edit(); return; }
         edit_focus("playlist-lib-search", playlist_edit_lib_query_);
+        text_engage("playlist-lib-search");
         if (edit_text_key(playlist_edit_lib_query_, edit_caret_, edit_anchor_, key, 120, &playlist_status_))
             playlist_refresh_lib_view();
         return;
@@ -6119,8 +6134,17 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         frame << "\x1b[41;97m " << prompt << " \x1b[0m\n";
         frame << "\n";
     } else {
-        std::string hint = "[" MUISC_ALT_NAME "+\u2190\u2192] Switch Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
-                            "[DEL] Remove | [4/5] Move \u2191\u2193 | [HOME] Save";
+        // Left/Right and ESC say what they do RIGHT NOW (see
+        // handle_playlist_key()): in a text box that was typed into they move
+        // the caret / leave the box, everywhere else they switch the tab /
+        // close the editor.
+        const char* field = playlist_tab_ == 1 ? (playlist_manage_focus_ == 0 ? "playlist-manage-search" : "")
+                          : playlist_edit_focus_ == 0 ? "playlist-name"
+                          : playlist_edit_focus_ == 1 ? "playlist-lib-search" : "";
+        const bool in_text = *field && text_engaged(field);
+        std::string hint = std::string(in_text ? "[\u2190\u2192] Cursor" : "[\u2190\u2192] Switch Tab")
+                         + " | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Add/Load | "
+                           "[DEL] Remove | [4/5] Move \u2191\u2193 | [CTRL+s] Save";
         frame << legend_sgr(settings_) << hint << "\x1b[0m\n";
         // Row 2: the text-field keys, plus Exit. Kept off row 1 so each row
         // fits comfortably inside a 120-column terminal without wrapping
@@ -6128,7 +6152,8 @@ void App::build_playlist_screen(std::ostringstream& frame, int W, int target_hei
         // budget above already accounts for exactly these two rows. [ESC]
         // Exit used to sit at the end of row 1, but that pushed row 1 past
         // the wrap width and cost a spurious third line; it lives here now.
-        frame << legend_sgr(settings_) << "[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | [ESC] Exit\x1b[0m\n";
+        frame << legend_sgr(settings_) << "[SHIFT+←→] Mark | [Ctrl+C/X/V] Copy/Cut/Paste | "
+              << (in_text ? "[ESC] Leave field" : "[ESC] Exit") << "\x1b[0m\n";
         if (!playlist_status_.empty()) frame << "\x1b[32m" << playlist_status_ << "\x1b[0m\n";
         else frame << "\n";
     }
@@ -6210,6 +6235,7 @@ void App::meta_open() {
     meta_prompt_paths_.clear();
     meta_ensure_session_loaded();  // reopening never loses what's already pending
     mode_ = Mode::MetaEdit;
+    text_disengage();
     meta_tab_ = 0;
     meta_focus_ = 0;
     meta_query_.clear();
@@ -6785,11 +6811,22 @@ bool App::handle_meta_prompt_key(int key) {
 void App::handle_meta_key(int key) {
     if (handle_meta_prompt_key(key)) return;
 
-    if (key == 27) { // ESC -- leaving always just keeps the autosave backup
+    if (key == 27) { // ESC
+        // Inside a text box ESC first steps out of it: the field editor goes
+        // back to the library (like ENTER), a search box that was typed into
+        // hands Left/Right back to the tab switch. Only an ESC outside a box
+        // leaves the editor -- which always just keeps the autosave backup.
+        if (meta_tab_ == 0 && meta_focus_ == 2) {
+            meta_focus_ = 1;
+            text_disengage();
+            if (meta_resort_edited_ && !meta_lib_view_.empty()) meta_refresh_lib_view();
+            return;
+        }
+        if (meta_tab_ == 0 && meta_focus_ == 0 && text_engaged("meta-search")) { text_disengage(); return; }
         mode_ = Mode::Browse;
         return;
     }
-    if (key == kKeyCtrlShiftS) {
+    if (key == kKeyCtrlS) {
         if (meta_session_.empty()) { meta_status_ = "nothing to save -- no pending edits"; return; }
         meta_prompt_ = MetaPrompt::Save;
         return;
@@ -6828,14 +6865,22 @@ void App::handle_meta_key(int key) {
     // impossible.
     bool arrow = last_key_was_arrow();
 
-    if (arrow && (key == 'C' || key == 'D') && !(meta_tab_ == 0 && meta_focus_ == 2)) { // left/right: the only 2 tabs
+    // The search box follows the playlist editor's rule: Left/Right switch
+    // tabs until something is typed into it (text_engage()), then they move
+    // the caret until ESC / TAB / ENTER. In the field editor they are always
+    // the caret keys -- it is only ever entered on purpose (ENTER / TAB).
+    // Alt+Left/Right switch tabs from everywhere.
+    const bool in_text = meta_tab_ == 0 && (meta_focus_ == 2 || (meta_focus_ == 0 && text_engaged("meta-search")));
+    if (key == kKeyAltLeft || key == kKeyAltRight || (arrow && (key == 'C' || key == 'D') && !in_text)) { // the only 2 tabs
         meta_tab_ = (meta_tab_ + 1) % 2;
         meta_focus_ = 0;
+        text_disengage();
         meta_refresh_lib_view();
         return;
     }
     if (key == 9) { // Tab: search field -> library picker -> field editor -> ...
         if (meta_tab_ == 0) meta_focus_ = (meta_focus_ + 1) % 3;
+        text_disengage();
         return;
     }
 
@@ -6855,8 +6900,9 @@ void App::handle_meta_key(int key) {
         // possible in here at all.
         if (arrow && key == 'A') { if (meta_lib_selected_ > 0) --meta_lib_selected_; return; }
         if (arrow && key == 'B') { if (meta_lib_selected_ + 1 < static_cast<int>(meta_lib_view_.size())) ++meta_lib_selected_; return; }
-        if (key == '\r' || key == '\n') { meta_focus_ = 1; return; } // confirm the filter, jump to the list
+        if (key == '\r' || key == '\n') { meta_focus_ = 1; text_disengage(); return; } // confirm the filter, jump to the list
         edit_focus("meta-search", meta_query_);
+        text_engage("meta-search");
         if (edit_text_key(meta_query_, edit_caret_, edit_anchor_, key, 120, &meta_status_))
             meta_refresh_lib_view();
         return;
@@ -7320,11 +7366,17 @@ void App::build_meta_screen(std::ostringstream& frame, int W, int target_height)
             else frame << colors << " " << l << " \x1b[0m\n";
         }
     } else {
+        // Left/Right and ESC say what they do RIGHT NOW: inside a text box
+        // that is in use they move the caret / leave the box, otherwise they
+        // switch the tab / close the editor (see handle_meta_key()).
+        const bool in_text = meta_tab_ == 0 && (meta_focus_ == 2 || (meta_focus_ == 0 && text_engaged("meta-search")));
+        const std::string lr = in_text ? "[\u2190\u2192] Cursor" : "[\u2190\u2192] Tab";
+        const std::string esc = in_text ? "[ESC] Leave field" : "[ESC] Exit";
         std::string hint = (meta_tab_ == 0)
-            ? "[\u2190\u2192] Tab | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | [SHIFT+b] Fetch | [SHIFT+r] Rescan | "
-              "[r] Edited first | [x/T/A/Y] Missing meta | [CTRL+SHIFT+s] Save | [CTRL+SHIFT+x] Discard | [ESC] Exit"
-            : "[\u2190\u2192] Tab | [ENTER] Fetch all | [SHIFT+b] Fetch this | [DEL] Remove | [SHIFT+r] Rescan | "
-              "[CTRL+SHIFT+s] Save | [CTRL+SHIFT+x] Discard | [ESC] Exit";
+            ? lr + " | [TAB] Focus | [\u2191\u2193] Navi. | [ENTER] Edit | [a] Fetch list | [SHIFT+b] Fetch | [SHIFT+r] Rescan | "
+              "[r] Edited first | [x/T/A/Y] Missing meta | [CTRL+s] Save | [CTRL+SHIFT+x] Discard | " + esc
+            : lr + " | [ENTER] Fetch all | [SHIFT+b] Fetch this | [DEL] Remove | [SHIFT+r] Rescan | "
+              "[CTRL+s] Save | [CTRL+SHIFT+x] Discard | " + esc;
         // The legend is wider than the screen (tab 0: ~210 columns once the
         // selection/clipboard commands are in it, tab 1: 116), and
         // truncate_str(hint, W) used to cut it mid-command at 120 -- the
@@ -8327,7 +8379,11 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     }
     y++;
 
-    pos(y, 1, legend_sgr(settings_) + (settings_tab_ == 4
+    // While a field is being edited (ENTER), TAB and the arrows stay in it:
+    // LEFT/RIGHT move the caret, and only ENTER (apply) or ESC (cancel) leave.
+    pos(y, 1, legend_sgr(settings_) + (mode_ == Mode::ColorEdit
+        ? "[ENTER] Apply | [ESC] Cancel | [\u2190\u2192] Cursor | [SHIFT+\u2190\u2192] Mark | [HOME/END] Jump | [Ctrl+C/X/V] Copy/Cut/Paste"
+        : settings_tab_ == 4
         ? "[TAB] Switch | [\u2191\u2193] Navigate | [ENTER] Change | [DEL] Default | [Ctrl+Shift+U] Undo | [s] Save | [ESC/q] Discard"
         : "[TAB] Switch | [\u2191\u2193\u2190\u2192] Navigate/Cycle | [ENTER] Edit | [s] Save | [ESC/q] Discard") + "\x1b[0m");
     y++;
@@ -8338,7 +8394,7 @@ void App::build_settings_screen(std::ostringstream& frame, int W, int player_h) 
     // and shift the whole UI left by a column). This row sits on the panel's
     // own last screen line, so it is truncated to the panel width: a long
     // path or error message just ends early instead of wrapping.
-    if (settings_dirty_) pos(y, 1, "\x1b[32m* unsaved changes (saved with S or when you leave)\x1b[0m");
+    if (settings_dirty_) pos(y, 1, "\x1b[32mUnsaved changes! Save with `s` or discard with `ESC`.\x1b[0m");
     else if (!status_line_.empty()) pos(y, 1, "\x1b[32m" + truncate_str(status_line_, W - 2) + "\x1b[0m");
 
     // 4. In-place text editing cursor placement.
@@ -8522,32 +8578,43 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         // is the playlist editor's own fixed legend (build_playlist_screen()'s
         // footer), none of which is a rebindable hotkey.
         {"PLAYLISTS", "HKeyPlaylist", "Open Playlists (create / manage)"},
-        {nullptr, "#" MUISC_ALT_NAME_UC "+LEFT/RIGHT", "Switch tab (Create/Edit vs Saved Playlists)"},
+        {nullptr, "#LEFT/RIGHT", "Switch tab (Create/Edit vs Saved Playlists); inside a name / search field after typing: move the caret"},
+        {nullptr, "#ESC", "Leave the field you typed in (LEFT/RIGHT switch tabs again); outside a field: close (asks to save unsaved changes)"},
+        {nullptr, "#" MUISC_ALT_NAME_UC "+LEFT/RIGHT", "Switch tab from anywhere, also while typing"},
         {nullptr, "#TAB", "Cycle focus (name field / library picker / track list)"},
         {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
         {nullptr, "#ENTER", "Add hovering track to playlist / load selected playlist"},
         {nullptr, "#4 / 5", "Move the hovering track up/down"},
         {nullptr, "#D / DEL / BACKSPACE", "Remove hovering track / delete selected playlist"},
-        {nullptr, "#HOME", "Save the playlist"},
+        {nullptr, "#CTRL+s", "Save the playlist"},
         {nullptr, "#SHIFT+LEFT/RIGHT", "Mark text (name / search fields)"},
         {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text"},
         // --- Meta editor -- same deal: HKeyMetaEditor opens it, everything
         // else is build_meta_screen()'s own fixed legend (both tabs).
         {"META EDITOR", "HKeyMetaEditor", "Meta editor: edit file name / artist / title / album / year"},
-        {nullptr, "#LEFT/RIGHT", "Switch tab (Edit vs Fetch List)"},
+        {nullptr, "#LEFT/RIGHT", "Switch tab (Edit vs Fetch List); in the search field after typing and in the field editor: move the caret"},
+        {nullptr, "#ESC", "Leave the search field / field editor; outside a field: close (pending edits are kept)"},
+        {nullptr, "#" MUISC_ALT_NAME_UC "+LEFT/RIGHT", "Switch tab from anywhere, also while typing"},
         {nullptr, "#TAB", "Meta editor: cycle panels (search / library / fields)"},
         {nullptr, "#UP/DOWN", "Navigate the focused list/picker (fixed arrow keys)"},
         {nullptr, "#ENTER", "Edit the hovering field (Fetch List tab: fetch the whole list)"},
-        {nullptr, "#SHIFT+LEFT/RIGHT", "Mark text (field editor)"},
-        {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text (field editor)"},
+        {nullptr, "#SHIFT+LEFT/RIGHT", "Mark text (search field / field editor)"},
+        {nullptr, "#CTRL+C/X/V", "Copy / cut / paste text (search field / field editor)"},
         {nullptr, "#a", "Meta editor: add the hovering file to the fetch list"},
         {nullptr, "#r", "Meta editor: toggle edited files on top of the library pane"},
         {nullptr, "#x / SHIFT+t / SHIFT+a / SHIFT+y", "Filter library: missing any / title / artist / year"},
         {nullptr, "#SHIFT+b", "Fetch metadata for the hovered title (AcoustID)"},
         {nullptr, "#SHIFT+r", "Rescan the library (new files); also in the meta data editor (library pane / fetch list focused)"},
         {nullptr, "#DEL / d", "Remove hovering track from the fetch list"},
-        {nullptr, "#CTRL+SHIFT+s", "Apply the meta editor's pending edits to the files"},
+        {nullptr, "#CTRL+s", "Apply the meta editor's pending edits to the files (asks first)"},
         {nullptr, "#CTRL+SHIFT+x", "Discard the meta editor's pending edits"},
+        // --- Settings ---
+        {"SETTINGS", "#TAB", "Next tab (not while a field is being edited)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Previous / next row  |  cycle a switch or choice / pick the first or second colour cell"},
+        {nullptr, "#ENTER", "Edit the selected colour, path, value or key in place"},
+        {nullptr, "#LEFT/RIGHT (editing)", "Move the caret; SHIFT+LEFT/RIGHT marks, HOME/END jump, CTRL+C/X/V copy / cut / paste"},
+        {nullptr, "#ENTER / ESC (editing)", "Apply the edit / cancel it -- only these two leave the field"},
+        {nullptr, "#s / ESC / q", "Save to config.txt and close / discard the changes and close"},
         // --- Settings (REFERENCE tab) ---
         {"SETTINGS (REFERENCE TAB)", "#ENTER", "Change the key of the selected command (type the new key, ENTER applies)"},
         {nullptr, "#DEL", "Restore the default key of the selected command"},

@@ -520,7 +520,7 @@ private:
     void settings_update_dirty();
     bool suspended_ = false;     // run() returned kExitSwitchMode: the App is kept alive and run() is called again on return
     void rescan_now();
-    bool switch_mode_ = false;   // quit_ was set by Ctrl+Shift+M: run() returns kExitSwitchMode
+    bool switch_mode_ = false;   // quit_ was set by the mode switch (SHIFT and +, the '*' key): run() returns kExitSwitchMode
     bool force_redraw_ = false;
     int last_render_w_ = -1;
     int last_render_rows_ = -1; // terminal height of the previous frame: a height change needs a full repaint too
@@ -821,6 +821,16 @@ private:
     size_t edit_anchor_ = 0;
     std::string edit_owner_;
     void edit_focus(const std::string& owner, const std::string& text);
+    // "Is this text box in use?" -- the rule that lets plain Left/Right switch
+    // the tabs of the playlist editor and the meta editor while still being
+    // the caret keys of their text boxes. A box becomes engaged with the first
+    // key typed / edited into it (text_engage(), with the same owner name
+    // edit_focus() uses); from then on Left/Right move the caret. ESC, TAB,
+    // ENTER or a tab switch disengage it, and Left/Right switch tabs again.
+    std::string engaged_owner_;
+    bool text_engaged(const std::string& owner) const { return !owner.empty() && engaged_owner_ == owner; }
+    void text_engage(const std::string& owner) { engaged_owner_ = owner; }
+    void text_disengage() { engaged_owner_.clear(); }
     // Returns the current value of (tab, row, col) as plain text, for
     // display and as the starting buffer when editing.
     // Returns a pointer to the color field for (row, col) on the Colors

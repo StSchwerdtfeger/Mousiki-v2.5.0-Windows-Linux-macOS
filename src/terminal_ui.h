@@ -74,12 +74,18 @@ constexpr int kKeyAltRight = 311;
 // palette, which swallowed the keystroke before this app ever saw it.)
 constexpr int kKeyCtrlShiftU = 312;
 constexpr int kKeyCtrlShiftZ = 313;
-// Ctrl+Shift+M -- switch between the music player and the radio mode.
-constexpr int kKeyCtrlShiftM = 314;
-
 // Alt+L -- the lyrics timing overlay (main UI). Another modifier combination,
 // so another sentinel (see kKeyCtrlShiftS/X above); not rebindable.
-constexpr int kKeyAltL = 314;
+// (Was 314 -- the value of the former Ctrl+Shift+M mode-switch sentinel, so
+// Alt+L / Ctrl+L switched to the radio instead of opening the overlay. The
+// mode switch is SHIFT and + (the '*' character) only now.)
+constexpr int kKeyAltL = 315;
+
+// Ctrl+S -- "save" in the playlist editor, the meta editor and the radio's
+// station lists menu. Arrives as the control byte 0x13, which only reaches the
+// app because raw mode clears IXON (otherwise the terminal swallows it as
+// XOFF and freezes the output until Ctrl+Q).
+constexpr int kKeyCtrlS = 316;
 
 // Name of the Alt key as shown in legends / the cheat sheet. The Mac keyboard
 // has no key called Alt -- the same key (the modifier the terminal reports as

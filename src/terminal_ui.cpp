@@ -98,6 +98,7 @@ TerminalIO::TerminalIO() {
     tcgetattr(STDIN_FILENO, &g_orig_termios);
     raw = g_orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
+    raw.c_iflag &= ~(IXON | IXOFF);   // Ctrl+S / Ctrl+Q reach the app as keys (Ctrl+S = save), not as flow control
     raw.c_cc[VMIN] = 0;
     raw.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &raw);
@@ -168,6 +169,7 @@ void TerminalIO::reassert_raw_mode() {
 #else
     struct termios raw = g_orig_termios;
     raw.c_lflag &= ~(ECHO | ICANON);
+    raw.c_iflag &= ~(IXON | IXOFF);   // see the constructor: Ctrl+S is a key here
     // Text-entry mode: keep SIGINT off the keyboard so Ctrl+C reaches the
     // editor as a key (copy) rather than as a signal (quit). Re-derived here
     // rather than applied once, because this runs on every poll.
@@ -406,8 +408,8 @@ int TerminalIO::poll_key() {
                     if (code == 'X' || code == 'x') { g_last_key_was_arrow = false; return kKeyCtrlShiftX; }
                     if (code == 'U' || code == 'u') { g_last_key_was_arrow = false; return kKeyCtrlShiftU; }
                     if (code == 'Z' || code == 'z') { g_last_key_was_arrow = false; return kKeyCtrlShiftZ; }
-                    if (code == 'M' || code == 'm') { g_last_key_was_arrow = false; return kKeyCtrlShiftM; }
                 }
+                if (mod == 5 && (code == 's' || code == 'S')) { g_last_key_was_arrow = false; return kKeyCtrlS; } // Ctrl+S
                 // "1;<mod> A" -- an arrow (or Home/End) pressed WITH a
                 // modifier, which is how xterm-style terminals report
                 // Shift+Left/Right: "ESC [ 1 ; 2 D". mod is
@@ -453,6 +455,7 @@ int TerminalIO::poll_key() {
     if (c == 0x03) { g_last_key_was_arrow = false; return kKeyCtrlC; }
     if (c == 0x18) { g_last_key_was_arrow = false; return kKeyCtrlX; }
     if (c == 0x16) { g_last_key_was_arrow = false; return kKeyCtrlV; }
+    if (c == 0x13) { g_last_key_was_arrow = false; return kKeyCtrlS; }   // Ctrl+S (IXON is off, see the constructor)
     // Ctrl+L = second way to open/close the lyrics timing overlay (same key as
     // Alt+L). On macOS Option only works as a modifier if the terminal is set to
     // "Option as Meta", which takes away typing special characters with Option

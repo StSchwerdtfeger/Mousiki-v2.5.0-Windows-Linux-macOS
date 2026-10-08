@@ -60,8 +60,9 @@ int main() {
     // this app touches parse the same way on every machine.
     std::setlocale(LC_NUMERIC, "C");
 
-    // Ctrl+Shift+M ends the running mode and starts the other one. Each mode is created inside its own scope, so
-    // everything it held (audio device, threads, caches) is released before the next one starts.
+    // The mode switch (SHIFT and +, the '*' character) ends the running mode and starts the other one. The radio is
+    // created inside its own scope, so everything it held (audio device, threads, caches) is released before the
+    // player comes back; the player is only suspended (see `app` below and src/mode_switch.h).
     int rc = 0;
     std::unique_ptr<muisc::App> app;   // lives while the radio runs (suspended, playback paused); the radio itself is destroyed on every switch
     try {

@@ -305,8 +305,11 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyPlayPreviousSong",            "b"},
             {"HKeySeekForward",                 "ARROW_KEY_RIGHT"},
             {"HKeySeekBackward",                "ARROW_KEY_LEFT"},
-            {"HKeyIncreaseVolume",              "1"},
-            {"HKeyDecreaseVolume",              "2"},
+            // "+" / "-" = volume, the same keys as in the radio mode.
+            // (Before v3.0.1 they were "1" / "2" and "+" cycled the lyrics
+            // area -- that one is "." now; old configs are migrated below.)
+            {"HKeyIncreaseVolume",              "+"},
+            {"HKeyDecreaseVolume",              "-"},
             {"HKeyAddHoveringSongToQueue",      "a"},
             {"HKeyRemoveHoveringSongFromQueue", "d"},
             {"HKeySwitchBetweenCards",          "TAB"},
@@ -322,7 +325,7 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyCheatsheet",                  "?"},
             {"HKeyRetryLyrics",                 "l"},
             {"HKeyShuffleNext",                 "#"},
-            {"HKeyToggleLyrics",                "+"},
+            {"HKeyToggleLyrics",                "."},
             {"HKeyQueueMoveUp",                 "4"},
             {"HKeyQueueMoveDown",               "5"},
             {"HKeyToggleWaveform",              "w"},
@@ -370,7 +373,7 @@ void apply_default_hotkeys(Settings& s) {
             // HKeyToggleNormalize, same convention as the other overlays.
             {"HKeyNormMenu",                    "V"},
             // Shift+E: the equaliser overlay (10 bands + presets). Uppercase
-            // on purpose -- plain "e" is HKeyResetPreference.
+            // on purpose -- plain "e" is HKeyQueueAddEnd.
             {"HKeyEqualizer",                   "E"},
             // Shift+Z: the sleep timer overlay (15/30/60/90/120 min, stop after
             // the current song). Uppercase on purpose, same convention as the
@@ -389,12 +392,30 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyQueueMoveBottom",             "%"},
         };
         // HKeyResetPreference was defined but nothing ever read it; configs
-        // written by older builds still carry it as "e", which would now
-        // collide with HKeyQueueAddEnd (resolve_hotkey_action() would pick
-        // one of the two nondeterministically).
+        // written by older builds still carry it (as "e", which would now
+        // collide with HKeyQueueAddEnd -- resolve_hotkey_action() would pick
+        // one of the two nondeterministically). Dropped whatever its key is,
+        // and no longer written back (see save_settings()'s hkey_order), so
+        // the next save removes the line from config.txt for good.
+        s.hotkeys.erase("HKeyResetPreference");
+        // v3.0.1: volume moved from "1" / "2" to "+" / "-", and the lyrics
+        // area cycle from "+" to ".". A config that still carries the old
+        // trio exactly as it was shipped is moved over as a whole; a user
+        // who rebound any of the three keeps their own keys. The move is
+        // skipped if "-" or "." is already taken by another action.
         {
-            auto it = s.hotkeys.find("HKeyResetPreference");
-            if (it != s.hotkeys.end() && it->second == "e") s.hotkeys.erase(it);
+            auto up = s.hotkeys.find("HKeyIncreaseVolume");
+            auto down = s.hotkeys.find("HKeyDecreaseVolume");
+            auto lyr = s.hotkeys.find("HKeyToggleLyrics");
+            if (up != s.hotkeys.end() && down != s.hotkeys.end() && lyr != s.hotkeys.end() &&
+                up->second == "1" && down->second == "2" && lyr->second == "+") {
+                bool taken = false;
+                for (const auto& [action, key] : s.hotkeys) {
+                    if (action == "HKeyIncreaseVolume" || action == "HKeyDecreaseVolume" || action == "HKeyToggleLyrics") continue;
+                    if (key == "-" || key == ".") { taken = true; break; }
+                }
+                if (!taken) { up->second = "+"; down->second = "-"; lyr->second = "."; }
+            }
         }
         for (const auto& [action, key] : defaults) {
             // Only fill actions that are entirely absent from the config.
@@ -1259,7 +1280,7 @@ static void write_settings(std::ostream& out, const Settings& s) {
         "HKeyTogglePlayPause", "HKeyCyclePlayMode", "HKeySearch", "HKeySearchOnline",
         "HKeySeekForward", "HKeySeekBackward", "HKeyIncreaseVolume", "HKeyDecreaseVolume",
         "HKeyAddHoveringSongToQueue", "HKeyRemoveHoveringSongFromQueue", "HKeySwitchBetweenCards",
-        "HKeyFilterForFolder", "HKeyClearFilter", "HKeyQuit", "HKeyResetPreference", "HKeyDownloadStream",
+        "HKeyFilterForFolder", "HKeyClearFilter", "HKeyQuit", "HKeyDownloadStream",
         "HKeyToggleNormalize", "HKeyToggleMetaOnly", "HKeyMetaEditor", "HKeyHistory", "HKeyEqualizer",
     };
     for (const char* name : hkey_order) {
