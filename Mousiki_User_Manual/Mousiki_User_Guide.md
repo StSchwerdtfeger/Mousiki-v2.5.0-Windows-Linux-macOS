@@ -1,6 +1,6 @@
-# Mousiki User Guide v3.0.0 (Windows · Linux · macOS) – music player and radio
+# Mousiki User Guide v3.1.0 (Windows · Linux · macOS) – music player and radio
 
-Mousiki TUI player is two programs in one: a terminal **music player** (chapters 1 to 10) and an **online radio** (chapter 11), including visualizations such as an oscilloscope and a spectogram, as well as a Karaoke mode, making use of its lyrics fetching capabilities, to just name some of the integrated features. Press `SHIFT` and `+` on a German keyboard (`SHIFT+8` on an English one: the key that types `*`) to switch between radio and music player mode (see [Two modes in one program](#two-modes-in-one-program) and [Keyboard layouts](#keyboard-layouts-german-and-english)).
+Mousiki TUI player is two programs in one: a terminal **music player** (chapters 1 to 10) and an **online radio** (chapter 11), including visualizations such as an oscilloscope and a spectrogram, as well as a Karaoke mode, making use of its lyrics fetching capabilities, to just name some of the integrated features. Press `SHIFT` and `+` on a German keyboard (`SHIFT+8` on an English one: the key that types `*`) to switch between radio and music player mode (see [Two modes in one program](#two-modes-in-one-program) and [Keyboard layouts](#keyboard-layouts-german-and-english)).
 
 The music player chapters walk through **every entry of the in-app cheat sheet** (`?`) and explain what each command does. Some settings that can only be changed in the config.txt are also discussed at the end of chapter 10. The radio chapter only describes what is new in the radio; everything both modes have in common (equalizer, oscilloscope, loudness normalization, sleep timer …) is explained once in the player chapters.
 The key shown for each command is the **default binding**. Your own bindings may differ if you changed them in `config.txt` or under **Settings → Reference**; the cheat sheet always shows the keys you actually have.
@@ -43,8 +43,8 @@ Mousiki starts with either of two commands in a terminal: **`mousiki`** or the s
 
 This guide writes the modifier as `ALT` (`ALT+L`, `ALT+←` / `ALT+→`). On a Mac that is the **Option (⌥)** key: a macOS build of Mousiki shows `OPTION+L` / `OPTION+LEFT/RIGHT` in the cheat sheet, everything else is identical. Two things to know:
 
-- he lyrics timing overlay can be opened (and closed) with `CTRL+L` on macOS and Linux, which needs no terminal setup. `OPTION+←` / `OPTION+→` (the optional tab switch of the playlist editor, the meta editor and the radio's station lists, see *Menus with tabs and text boxes* below) work in Terminal.app and iTerm2 without it, because they send the standard word-movement codes.
-- **Option+←/→** (tab switch) is sent as `ESC b` / `ESC f` by Terminal.app and iTerm2 out of the box, and Mousiki understands both that and the xterm form, so it works without the setting above.
+- The lyrics timing overlay can be opened (and closed) with `CTRL+L` on macOS and Linux, which needs no terminal setup. `OPTION+←` / `OPTION+→` (the optional tab switch of the playlist editor, the meta editor and the radio's station lists, see *Menus with tabs and text boxes* below) work in Terminal.app and iTerm2 without it, because they send the standard word-movement codes.
+- **Option+←/→** (tab switch) is sent as `ESC b` / `ESC f` by Terminal.app and iTerm2 out of the box, and Mousiki understands both that and the xterm form, so it works without any terminal setting.
 
 ### Uppercase letters
 
@@ -298,7 +298,7 @@ The cheat sheet splits these keys into three groups: **NAVIGATION & VIEW** (the 
 | `O` (Shift+O) | Oscilloscope tuning | Opens a small overlay to change the oscilloscope **live**: style (braille / image), frame rate, music mode, afterglow, line thickness, tail, glow, Z axis, rotation, colours and more -- each style keeps its own values. See *The oscilloscope* below. |
 | `I` (Shift+I) | Spectrogram options | Opens the spectrogram overlay (style, motion, scale, frequencies, gain, range, window, colours …). See *Spectrogram* below. |
 | `U` (Shift+U) | Spectrogram full screen | The spectrogram over the whole screen, with frequency labels and a time ruler. `ESC` or `SHIFT+u` closes it. |
-| `)` (German `SHIFT+9`, English `SHIFT+0`) | Scope window | Opens / closes the oscilloscope in **its own window**, drawn by the graphics card at the monitor's refresh rate. See *Scope window* below. (The key is the character `)`. Up to v3.0 it was `SHIFT+w`; an old config is moved over.) Works always, also while the oscilloscope is switched off on the ON/OFF tab. |
+| `)` (German `SHIFT+9`, English `SHIFT+0`) | Scope window | Opens / closes the oscilloscope in **its own window**, drawn by the graphics card at the monitor's refresh rate. See *Scope window* below. (The key is the character `)`.) Works always, also while the oscilloscope is switched off on the ON/OFF tab. |
 | `(` (German `SHIFT+8`, English `SHIFT+9`) | Spectrogram window | Opens / closes the spectrogram in **its own window**, scrolling smoothly at the monitor's refresh rate. See *Spectrogram window* below. Works always. |
 
 
@@ -344,7 +344,7 @@ For tracks whose synced lyrics run ahead of or behind the music. The overlay shi
 | `ENTER` or `S` | **Save** the offset into the track's lyrics file and close |
 | `ESC` or `ALT+l` | Cancel: the offset from before the overlay was opened comes back |
 
-- A **positive** offset (`+0.3 s`) means the lyrics appear later than their timestamps say, so use it when the lyrics are **too early**. A negative offset makes them appear earlier. The range is ±30 s.
+- A **positive** offset (`+0.3 s`) means the lyrics appear later than their timestamps say, so use it when the lyrics are **too early**. A negative offset makes them appear earlier. The range is ±120 s.
 - Saving writes a standard `[offset:...]` tag at the top of the track's `.lrc` file (in the `lyrics` folder next to the track, in milliseconds, with the usual LRC sign convention: positive = earlier). The timestamps themselves are not changed. The offset is read back whenever the lyrics are loaded from that file, and other players that know the tag use it too. Saving `0` removes the tag.
 - The offset belongs to **one track's lyrics file**. Fetching the lyrics again with `l` (retry) replaces the file and resets the offset. If there is no lyrics file for the track, the offset still applies until the track changes, but saving reports that it could not be saved.
 - Playback keeps running while the overlay is open; only its keys react.
@@ -408,7 +408,7 @@ Playback keeps running while the overlay is open, but its keys are the only ones
 
 Two starting points for the braille style: for a crisp, "real oscilloscope" look try Decay `0.65`, Dot threshold `0.35`, Tail `0.60`. For a glowing, dreamy look try `0.90`, `0.20`, `0.25`.
 
-**Image style.** The terminal draws the picture itself, via the **Kitty graphics protocol** (Kitty, WezTerm, Ghostty, Konsole …) or **Sixel** (Windows Terminal 1.22+, foot, xterm …). Without either, the braille scope stays. `MOUSIKI_GFX=kitty|sixel|off` forces a protocol and `MOUSIKI_CELLPX=10x20` sets the cell size (otherwise it is asked from the terminal). The scope sends at most as many pictures per second as the **Frame rate**, and never more than 60 with Kitty, 60 with Sixel at `half` / `third` resolution and 30 with Sixel at `full`. A picture is only sent when there is a new one: the text around it is drawn without touching the picture's cells. With Sixel, a smaller picture is enlarged by repeating its pixels (in Windows Terminal the rows through the Sixel pixel aspect ratio, so they are not sent twice); Kitty terminals scale the picture themselves. If the scope stutters, lower **Image resolution** or **Frame rate** first. Small overlays that reach into the scope area hide the covered part of the picture, full-screen menus remove it.
+**Image style.** The terminal draws the picture itself, via the **Kitty graphics protocol** (Kitty, WezTerm, Ghostty, Konsole …) or **Sixel** (Windows Terminal 1.22+, foot, xterm …). Without either, the braille scope stays. `MOUSIKI_GFX=kitty|sixel|off` forces a protocol and `MOUSIKI_CELLPX=10x20` sets the cell size (otherwise it is asked from the terminal). In Windows Terminal a smaller Sixel picture is stretched vertically through the Sixel pixel aspect ratio (see below); `MOUSIKI_SIXEL_ASPECT=1` uses that in another terminal too (only useful where the terminal honours the aspect ratio). The scope sends at most as many pictures per second as the **Frame rate**, and never more than 60 with Kitty, 60 with Sixel at `half` / `third` resolution and 30 with Sixel at `full`. A picture is only sent when there is a new one: the text around it is drawn without touching the picture's cells. With Sixel, a smaller picture is enlarged by repeating its pixels (in Windows Terminal the rows through the Sixel pixel aspect ratio, so they are not sent twice); Kitty terminals scale the picture themselves. If the scope stutters, lower **Image resolution** or **Frame rate** first. Small overlays that reach into the scope area hide the covered part of the picture, full-screen menus remove it.
 
 **In radio mode** the overlay is the same, with the radio's own values in `radio_config.txt`, and the environment variables are called `MOUSIKI_RADIO_GFX` and `MOUSIKI_RADIO_CELLPX` (see [11.4](#114-what-the-radio-shares-with-the-player)).
 
@@ -435,7 +435,7 @@ The key that types `)` opens the oscilloscope in **its own window** next to the 
 - **Brightness** adjusts itself: a tone that retraces the same figure all the time would otherwise burn white, quiet sparse music would be faint.
 - **Title**: the playing track (radio: station and song).
 - The window remembers its position, size, fullscreen and always-on-top in `~/.config/mousiki/scope_window.txt` (on Windows `%USERPROFILE%\.config\mousiki\`). It stays open when you switch between player and radio and closes with Mousiki.
-- **Needs SDL2** (2.0.18 or newer, zlib licence), which Mousiki loads when the window opens; nothing else in Mousiki needs it. `setup.ps1` puts `SDL2.dll` next to `mousiki.exe` (or download `SDL2-<version>-win32-x64.zip` from [github.com/libsdl-org/SDL/releases](https://github.com/libsdl-org/SDL/releases) and copy `SDL2.dll` there); `setup.sh` installs it on Linux / macOS (`libsdl2-2.0-0`, `SDL2`, `sdl2`, `brew install sdl2`). Without it, the window keys (`)` / `(`) say what is missing.
+- **Needs SDL2** (2.0.18 or newer, zlib licence), which Mousiki loads when the window opens; nothing else in Mousiki needs it. The Windows installer and portable zip include `SDL2.dll`, and `setup.ps1` puts it next to `mousiki.exe` when you build yourself (or download `SDL2-<version>-win32-x64.zip` from [github.com/libsdl-org/SDL/releases](https://github.com/libsdl-org/SDL/releases) and copy `SDL2.dll` there). On Linux / macOS the system's SDL2 is used: the `.deb` recommends `libsdl2-2.0-0`, `setup.sh` installs it (`libsdl2-2.0-0`, `SDL2`, `sdl2`, `brew install sdl2`), and for the portable zips install it yourself (Ubuntu: `sudo apt install libsdl2-2.0-0`, macOS: `brew install sdl2`). Without it, the window keys (`)` / `(`) say what is missing.
 - The window is a second copy of Mousiki (`mousiki --scope-window`) that gets the audio through a pipe. A graphics driver problem can therefore only close the window, never the player, and dragging the window never stalls the music or the terminal. If the window cannot start, the status line shows why (the reason is also in `~/.cache/mousiki/scope_window_error.txt`).
 
 ### Spectrogram window (`(`: German `SHIFT+8`, English `SHIFT+9`)
@@ -449,14 +449,14 @@ The key that types `(` opens the **spectrogram in its own window** (again: close
 - Title: the playing track (radio: station and song). Position, size, fullscreen and always-on-top are kept in `~/.config/mousiki/spectro_window.txt`; it stays open when you switch between player and radio and closes with Mousiki.
 - Needs SDL2, like the scope window. It is a second copy of Mousiki (`mousiki --spectro-window`) that gets the audio through a pipe; if it cannot start the status line says why (also in `~/.cache/mousiki/spectro_window_error.txt`).
 
-![Spectogram window.](images/Spec_window.png)
+![Spectrogram window.](images/Spec_window.png)
 
 
 ### Spectrogram (`SHIFT+i`, `SHIFT+u`)
 
 The third visual for the lyrics area (and the radio's scope block): a **spectrogram** made the way **Audacity** makes its spectrogram view, with Audacity's default settings and colours -- time runs from left to right, the frequency goes up, the colour shows how strong each frequency is. A stereo track is drawn as two channels above each other (left on top), like a stereo track in Audacity. For a perfectly smooth picture open it in its own window with `(` (German `SHIFT+8`, English `SHIFT+9`; see *Spectrogram window*). Switch to it with `.` (lyrics → sphere → oscilloscope → spectrogram) or with **Lyric Viz** = `spectro` (radio: **Osci/sphere** = `spectro`). It is the default visual, in the image style (the overlays no longer have a *Display* row: switching the visual is the `.` key's job).
 
-![Spectogram overlay with settings.](images/Spec_window.png)
+![Spectrogram overlay with settings.](images/Spec_overlay.png)
 
 
 **What it can do, in short:**
@@ -612,7 +612,7 @@ Everything else keeps working from inside the overlay: `ENTER` plays, `T` cycles
 
 ![Big list overlay](images/Playback_Main_UI_TRACK_OVERLAY.png)
 
-*Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
+*Big list overlay can be opened via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
 
 ## 5. Queue (main UI)
 
@@ -656,7 +656,7 @@ Only one of the two overlays can be open at a time: `SHIFT+k` while the list ove
 
 ![Big queue overlay](images/Playback_Main_UI_QUEUE_OVERLAY.png)
 
-*Big list overlay can be open via `SHIFT+l` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
+*Big queue overlay can be opened via `SHIFT+k` and closed via the same command or `ESC`. Fast scrolling (scroll per page) is possible via `SHIFT+↑/↓`.*
 
 ### Locked queue (`!`)
 
@@ -882,7 +882,7 @@ What the lists contain:
 
 Files that have been moved or deleted since they were played are skipped, and the status line reports how many tracks were queued (and how many were missing, or that fewer were available). Online tracks are queued as online tracks.
 
-The history keeps the newest 1000 plays one by one and folds older ones into lifetime totals per title. From v3.0.1 on those totals also remember the day and the time of day of every play, so the period and time-of-day lists stay exact over years. Plays folded by an older version only count for the all-time lists.
+The history keeps the newest 1000 plays one by one and folds older ones into lifetime totals per title. From v3.1.0 on those totals also remember the day and the time of day of every play, so the period and time-of-day lists stay exact over years. Plays folded by an older version only count for the all-time lists.
 
 ---
 
@@ -1002,7 +1002,9 @@ All rows are cycled with `←`/`→` (or typed after `ENTER`).
 
 ### Tab 4: PATHS
 
-*The PATHS tab: the folders Mousiki reads music from, downloads to, and keeps playlists and the history in. (There is no screenshot for this tab yet.)*
+![Settings, Paths tab](images/Settings_PATHS.png)
+
+*The PATHS tab: the folders Mousiki reads music from, downloads to, and keeps playlists and the history in. (The screenshot is from before the PLAYLIST EXPORT PATH row was added.)*
 
 Five sections, each under its header in the header colour. Move onto a row and press `ENTER` to edit it. The tab scrolls with the cursor, so a short terminal is fine.
 
@@ -1033,6 +1035,10 @@ The longest tab. It scrolls as one list and has two parts: the hotkeys, then the
 - Keys that are **not** rebindable (`ESC`, `SHIFT+b`, the playlist and meta editors' own keys, `CTRL+s`, `CTRL+SHIFT+x`, `CTRL+SHIFT+z/U`, `ALT+l`) are not listed. The cheat sheet shows those.
 
 **FONT / CHARACTER MAP** (read-only). Shows the `A = A, a` table from `config.txt`, which lets you re-font the interface with fancy Unicode letters without changing the terminal font. It cannot be edited here. Edit the `font_en={ … }` block in `config.txt` while the app is closed.
+
+### Tab 6: ABOUT APP
+
+The credits and versions of the original app and of this port, as text that scrolls with `↑` / `↓`. The text is kept in `config.txt` (the `ClassTextAboutApp= { … };` block) and can be edited there while the app is closed; the version line of the port is updated to the running version automatically, so a `config.txt` saved by an older version does not keep showing the old number.
 
 ### Settings that exist (only) in `config.txt`
 
@@ -1116,7 +1122,7 @@ All of them are also in the radio's own cheat sheet (`?`, categorized and scroll
 | `v` / `SHIFT+v` | Loudness normalization on/off / its overlay |
 | `SHIFT+e` | Equalizer overlay |
 | `SHIFT+o` | Oscilloscope tuning overlay |
-| `)` / `(` | Scope window / spectrogram window: the oscilloscope / the spectrogram in their own windows (see chapter 3). German `SHIFT+9` / `SHIFT+8`, English `SHIFT+0` / `SHIFT+9`; the scope window was `SHIFT+w` up to v3.0 |
+| `)` / `(` | Scope window / spectrogram window: the oscilloscope / the spectrogram in their own windows (see chapter 3). German `SHIFT+9` / `SHIFT+8`, English `SHIFT+0` / `SHIFT+9` |
 | `SHIFT+z` | Sleep timer |
 | `SPACE` | Pause / resume the station; the stream keeps buffering (see 11.10) |
 | `[` / `]` | Jump back / forward 30 seconds in the timeshift buffer (German keyboard: `ALT GR+8` / `ALT GR+9`) |
@@ -1412,10 +1418,30 @@ The `@keys` line names the letters of the slots the file was written with (slot 
 | **Email** | itz.ender5820@gmail.com | **Version** | original and final v1.0 |
 | | | **Licence** | Apache Licence 2.0 |
 
-### Windows port, incl. extensive modifications up to v3.0.0 (including the radio mode)
+### Windows port, incl. extensive modifications up to v3.1.0 (including the radio mode)
 
 | | | | |
 |---|---|---|---|
 | **Developer** | Steffen Schwerdtfeger | **GitHub** | [StSchwerdtfeger](https://github.com/StSchwerdtfeger) |
-| **Email** | fanti.blub@gmail.com | **Version** | current v3.0.0 |
+| **Email** | fanti.blub@gmail.com | **Version** | current v3.1.0 |
 | | | **Licence** | Apache Licence 2.0 |
+
+### Third-party software and licences
+
+Mousiki is licensed under the Apache Licence 2.0 (file `LICENSE`). It contains or uses the following third-party software; the full licence texts are in `THIRD_PARTY_LICENSES.txt`, which is next to the program in every installer and portable package (and in the repository root).
+
+| Component | Used for | Licence | How |
+|---|---|---|---|
+| miniaudio 0.11.25 | Audio output and decoding of MP3 / FLAC / WAV | Public domain (Unlicense) or MIT-0 | Compiled in |
+| KISS FFT | Spectrum visualizer, spectrogram | BSD-3-Clause | Compiled in |
+| miniz 3.0.2 | Compresses the image-style pictures (Kitty graphics) | MIT | Compiled in |
+| Roseus colour map | Default spectrogram colours | CC0 1.0 | Compiled in |
+| Chromaprint 1.6.1 (with its own KISS FFT) | `fpcalc`, the AcoustID fingerprint helper | MIT (upstream treats the full project as LGPL-2.1 because of FFmpeg parts that are not included here) | Compiled into `fpcalc` |
+| SDL2 | Scope window and spectrogram window | zlib | Loaded at run time; `SDL2.dll` is included in the Windows packages |
+| FFmpeg (`ffmpeg`, `ffprobe`) | Decoding, metadata, tag writing, radio streams, recordings | GPL-3.0 (bundled builds) | Separate program; bundled on Windows and in the Linux portable zip |
+| yt-dlp | YouTube / SoundCloud / Bandcamp streams and downloads | Unlicense | Separate program; bundled in the packages |
+| Python (embeddable, Windows) and `requests`, `urllib3`, `idna`, `certifi`, `charset-normalizer` | Lyrics, fast search, AcoustID and Bandcamp scripts | PSF / Apache-2.0 / MIT / BSD-3-Clause / MPL-2.0 | Bundled in the packages |
+| sidplayfp, libopenmpt, libgme | C64 SID tunes, tracker modules, game music | GPL-2.0+ / BSD-3-Clause / LGPL-2.1+ | Optional, not bundled (sidplayfp runs as a program, the others through FFmpeg) |
+| curl | The radio's Radio Browser search | curl licence | Separate program (part of Windows 10+, macOS and most Linux systems) |
+
+Each package also has a `THIRD-PARTY.txt` that lists the tools bundled in exactly that package, with their download sources.
