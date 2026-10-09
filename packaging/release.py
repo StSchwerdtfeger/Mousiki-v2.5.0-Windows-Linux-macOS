@@ -1226,7 +1226,16 @@ def write_checksums(dist):
     files = sorted({p for pat in pats for p in dist.glob(pat)})
     if not files:
         return
-    write_text(dist / "SHA256SUMS.txt", "".join("%s  %s\n" % (sha256_of(p), p.name) for p in files))
+    sums = dist / "SHA256SUMS.txt"
+    text = "".join("%s  %s\n" % (sha256_of(p), p.name) for p in files)
+    old = sums.read_text(encoding="utf-8") if sums.is_file() else None
+    if old == text:
+        return                                  # unchanged: a signature made for it stays valid
+    write_text(sums, text)
+    asc = dist / "SHA256SUMS.txt.asc"
+    if asc.exists():                            # signed a different list: it would no longer verify
+        asc.unlink()
+        warn("SHA256SUMS.txt changed, its old signature was removed - sign again: release.py checksums --gpg-key KEYID")
 
 
 def gpg_binary():
@@ -1450,8 +1459,9 @@ def cmd_cloud(a):
             if p.is_file() and ext in (".exe", ".zip", ".deb", ".pkg"):
                 shutil.copy2(str(p), str(dist / p.name))
                 got.append(dist / p.name)
-            elif p.is_file() and (p.name == "mousiki-release-key.asc" or (ext == ".asc" and p.name[:-4].lower().endswith((".exe", ".zip", ".deb", ".pkg")))):
-                shutil.copy2(str(p), str(dist / p.name))      # GPG signatures made in the workflow
+            elif p.is_file() and (p.name in ("mousiki-release-key.asc", "SHA256SUMS.txt", "SHA256SUMS.txt.asc")
+                                  or (ext == ".asc" and p.name[:-4].lower().endswith((".exe", ".zip", ".deb", ".pkg")))):
+                shutil.copy2(str(p), str(dist / p.name))      # checksums + GPG signatures made in the workflow
             elif p.is_file() and p.name.endswith(".intoto.jsonl"):
                 shutil.copy2(str(p), str(dist / p.name))      # provenance bundle
     write_checksums(dist)
