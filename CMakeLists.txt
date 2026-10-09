@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(mousiki VERSION 3.0.0 LANGUAGES CXX C)
+project(mousiki VERSION 3.1.0 LANGUAGES CXX C)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -65,6 +65,9 @@ set_source_files_properties(${MINIZ_SOURCES} PROPERTIES LANGUAGE C)
 
 add_executable(mousiki ${MUISC_SOURCES} ${KISSFFT_SOURCES} ${MINIZ_SOURCES})
 target_include_directories(mousiki PRIVATE "${CMAKE_SOURCE_DIR}/src" "${MINIAUDIO_DIR}" "${KISSFFT_DIR}" "${MINIZ_DIR}")
+# The version shown on the ABOUT APP tabs (src/version.h) comes from project(... VERSION ...) above,
+# so a release only has to change that one line.
+target_compile_definitions(mousiki PRIVATE MOUSIKI_VERSION="${PROJECT_VERSION}")
 
 # ---------------------------------------------------------------------------
 # App icon (Windows only): mousiki.rc + mousiki.ico in the source root -- the
@@ -222,7 +225,8 @@ if(MOUSIKI_BUILD_RADIO_STANDALONE)
   set(RADIO_SOURCES ${RADIO_MODE_SOURCES} src_radio/radio_standalone.cpp
       src/history.cpp src/cache_manager.cpp src/youtube_source.cpp src/online_source.cpp
       src/terminal_ui.cpp src/sphere_visualizer.cpp src/indic_handler.cpp src/process_util.cpp src/console_log.cpp
-      src/fft_visualizer.cpp src/audio_backend.cpp src/miniaudio_impl.cpp src/keyboard_layout.cpp)
+      src/fft_visualizer.cpp src/audio_backend.cpp src/miniaudio_impl.cpp src/keyboard_layout.cpp
+      src/spectrogram.cpp src/scope_window.cpp)
   if(WIN32)
     list(APPEND RADIO_SOURCES src/win_compat.cpp)
   endif()
@@ -230,6 +234,7 @@ if(MOUSIKI_BUILD_RADIO_STANDALONE)
   target_include_directories(mousiki_radio PRIVATE "${CMAKE_SOURCE_DIR}/src" "${CMAKE_SOURCE_DIR}/src_radio"
                              "${MINIAUDIO_DIR}" "${KISSFFT_DIR}" "${MINIZ_DIR}")
   target_link_libraries(mousiki_radio PRIVATE Threads::Threads)
+  target_compile_definitions(mousiki_radio PRIVATE MOUSIKI_VERSION="${PROJECT_VERSION}")
   # MA_ENABLE_NULL: lets MOUSIKI_RADIO_NULL=1 run the radio headless (tests, CI).
   if(ANDROID)
     target_compile_definitions(mousiki_radio PRIVATE MUISC_PLATFORM_ANDROID=1 MA_ENABLE_ONLY_SPECIFIC_BACKENDS=1 MA_ENABLE_OPENSL=1 MA_ENABLE_NULL=1)

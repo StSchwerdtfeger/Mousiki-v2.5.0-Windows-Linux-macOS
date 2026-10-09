@@ -1,0 +1,237 @@
+Mousiki - third-party software
+==============================
+
+Mousiki itself is licensed under the Apache License 2.0 (see LICENSE).
+This file lists the third-party code that is compiled into the mousiki and
+fpcalc programs, with the licence texts their authors ask to be passed on,
+followed by the tools that the installers and portable packages bundle and
+the optional programs Mousiki can use. The sources of the compiled-in code
+are in third_party/ of the source repository.
+
+Compiled into mousiki
+  - miniaudio 0.11.25 (David Reid) ............ public domain (Unlicense) or MIT-0
+  - KISS FFT (Mark Borgerding) ................ BSD-3-Clause
+  - miniz 3.0.2 (Rich Geldreich, RAD Game Tools, Valve Software) ... MIT
+  - Roseus colour map (dofuuz/roseus) ......... CC0 1.0 (spectrogram colours)
+Compiled into fpcalc (the AcoustID fingerprint helper in scripts/)
+  - Chromaprint 1.6.1 (Lukas Lalinsky) ........ MIT, see the note in its section
+  - KISS FFT, Chromaprint's own copy .......... BSD-3-Clause
+Loaded at run time, if present
+  - SDL2 (Sam Lantinga and contributors) ...... zlib licence
+    Bundled as SDL2.dll in the Windows installer and portable zip; on Linux and
+    macOS the system's SDL2 is used. Only the scope and spectrogram windows use it.
+
+
+==============================================================================
+miniaudio - https://miniaud.io - third_party/miniaudio.h
+==============================================================================
+
+This software is available as a choice of the following licenses. Choose
+whichever you prefer.
+
+===============================================================================
+ALTERNATIVE 1 - Public Domain (www.unlicense.org)
+===============================================================================
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+For more information, please refer to <http://unlicense.org/>
+
+===============================================================================
+ALTERNATIVE 2 - MIT No Attribution
+===============================================================================
+Copyright 2026 David Reid
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+==============================================================================
+KISS FFT - https://github.com/mborgerding/kissfft - third_party/kissfft, third_party/chromaprint/kissfft
+==============================================================================
+
+Copyright (c) 2003-2010, Mark Borgerding. All rights reserved.
+
+SPDX-License-Identifier: BSD-3-Clause
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+==============================================================================
+miniz - https://github.com/richgel999/miniz - third_party/miniz
+==============================================================================
+
+Copyright 2013-2014 RAD Game Tools and Valve Software
+Copyright 2010-2014 Rich Geldreich and Tenacious Software LLC
+
+All Rights Reserved.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+Chromaprint - https://github.com/acoustid/chromaprint - third_party/chromaprint
+==============================================================================
+
+Chromaprint's own source code is under the MIT licence below. Upstream notes that
+Chromaprint as a whole is to be treated as LGPL-2.1, because the complete project
+includes some parts of FFmpeg. Those parts (src/avresample and the FFmpeg audio
+and FFT back ends) are not part of the copy used here: fpcalc is built from
+Chromaprint's own sources plus its bundled KISS FFT, and decodes audio by running
+the separate ffmpeg program (see third_party/chromaprint/README.md and
+third_party/chromaprint/LICENSE.md).
+
+Copyright (C) 2010-2016  Lukas Lalinsky
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+Roseus colour map - https://github.com/dofuuz/roseus
+==============================================================================
+
+The spectrogram's default colours ("Color (Roseus)", also Audacity's default) are
+the Roseus colour map by dofuuz, released under CC0 1.0 Universal (public domain
+dedication): https://creativecommons.org/publicdomain/zero/1.0/
+
+==============================================================================
+SDL2 - https://www.libsdl.org - Windows packages: app/SDL2.dll
+==============================================================================
+
+Simple DirectMedia Layer
+Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+==============================================================================
+Tools bundled with the installers and portable packages
+==============================================================================
+
+These are separate programs, downloaded unmodified from their projects when the
+packages are built and listed again in THIRD-PARTY.txt inside each package:
+
+  - FFmpeg (ffmpeg, ffprobe) ........ GPL-3.0 builds
+      Windows: "essentials" build from https://www.gyan.dev/ffmpeg/builds/
+      Linux portable zip: static build from https://johnvansickle.com/ffmpeg/
+      Source code: https://ffmpeg.org (and the build pages above); the licence
+      text is included as bin/ffmpeg-LICENSE.txt or bin/ffmpeg-GPLv3.txt
+  - yt-dlp .......................... Unlicense - https://github.com/yt-dlp/yt-dlp
+  - Python (embeddable, Windows) .... PSF License - https://www.python.org
+  - requests ........................ Apache-2.0
+  - urllib3 ......................... MIT
+  - idna ............................ BSD-3-Clause
+  - certifi ......................... MPL-2.0
+  - charset-normalizer .............. MIT
+    (the Python packages are in pylib/, each with its licence file)
+
+==============================================================================
+Optional programs and libraries Mousiki can use (not bundled)
+==============================================================================
+
+  - sidplayfp (C64 SID tunes) ............... GPL-2.0-or-later, run as a separate program
+  - libopenmpt (tracker modules) ............ BSD-3-Clause, used through FFmpeg
+  - libgme (game console music) ............. LGPL-2.1-or-later, used through FFmpeg
+  - curl (radio station search) ............. curl licence (MIT-style), run as a program
+  - ALSA / PulseAudio (Linux audio) ......... LGPL-2.1-or-later, loaded at run time by miniaudio
+
+==============================================================================
+Online services
+==============================================================================
+
+Mousiki talks to these services; their own terms of use apply to what they return:
+YouTube, SoundCloud and Bandcamp (through yt-dlp), LRCLIB and lyrics-api.boidu.dev
+(lyrics), AcoustID (fingerprint lookup) and Radio Browser (radio station directory).

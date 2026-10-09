@@ -159,6 +159,16 @@ pip_install_requests() {
     python3 -m pip install --quiet --user --break-system-packages --upgrade requests
 }
 
+# SDL2 (optional): the scope and spectrogram windows. Mousiki dlopen()s it at run time.
+have_sdl2() {
+    if [ "$PLATFORM" = "macos" ]; then
+        [ -e /opt/homebrew/lib/libSDL2-2.0.0.dylib ] || [ -e /usr/local/lib/libSDL2-2.0.0.dylib ] ||
+            { have brew && brew list --versions sdl2 >/dev/null 2>&1; }
+    else
+        { ldconfig -p 2>/dev/null || /sbin/ldconfig -p 2>/dev/null; } | grep -q 'libSDL2-2\.0\.so\.0'
+    fi
+}
+
 pip_install_ytdlp() {
     have python3 || return 1
     python3 -m pip --version >/dev/null 2>&1 || return 1
@@ -204,7 +214,7 @@ install_deps() {
     fi
 
     # Work out what is missing, so that nothing is touched if everything is there.
-    local need_compiler=0 need_cmake=0 need_ffmpeg=0 need_ytdlp=0 need_python=0 need_audio=0 need_curl=0
+    local need_compiler=0 need_cmake=0 need_ffmpeg=0 need_ytdlp=0 need_python=0 need_audio=0 need_curl=0 need_sdl=0
     if ! have c++ && ! have g++ && ! have clang++; then need_compiler=1; fi
     have cmake   || need_cmake=1
     have ffmpeg  || need_ffmpeg=1
@@ -212,12 +222,13 @@ install_deps() {
     have yt-dlp  || need_ytdlp=1
     have python3 || need_python=1
     have curl    || need_curl=1     # radio mode: Radio Browser search
+    have_sdl2    || need_sdl=1      # optional: scope / spectrogram windows
     # ALSA/PulseAudio: miniaudio dlopen()s them at runtime, so there is no
     # reliable "is it installed" test that doesn't depend on the distro.
     # Installing the (tiny) dev packages is idempotent and guarantees both.
     [ "$PLATFORM" = "linux" ] && need_audio=1
 
-    if [ $((need_compiler + need_cmake + need_ffmpeg + need_ytdlp + need_python + need_audio + need_curl)) -gt 0 ]; then
+    if [ $((need_compiler + need_cmake + need_ffmpeg + need_ytdlp + need_python + need_audio + need_curl + need_sdl)) -gt 0 ]; then
         confirm_install || { warn "skipping package installation at your request."; return 0; }
     fi
 
@@ -267,6 +278,19 @@ install_deps() {
     if [ "$need_curl" -eq 1 ]; then
         step "Installing curl (radio mode: station search)"
         pkg_install curl || warn "could not install curl -- the radio's RADIO BROWSER search (SHIFT+S) will not work"
+    fi
+
+    # --- SDL2 (optional: scope and spectrogram windows) ----------------------
+    if [ "$need_sdl" -eq 1 ]; then
+        step "Installing SDL2 (optional: the scope and spectrogram windows)"
+        case "$PM" in
+            apt)    pkg_install_optional "SDL2" libsdl2-2.0-0 ;;
+            dnf)    pkg_install_optional "SDL2" SDL2 ;;
+            pacman) pkg_install_optional "SDL2" sdl2 ;;
+            zypper) pkg_install_optional "SDL2" libSDL2-2_0-0 ;;
+            apk)    pkg_install_optional "SDL2" sdl2 ;;
+            brew)   pkg_install_optional "SDL2" sdl2 ;;
+        esac
     fi
 
     # --- python3 -------------------------------------------------------------

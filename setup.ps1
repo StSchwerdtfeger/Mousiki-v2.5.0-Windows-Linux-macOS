@@ -143,6 +143,41 @@ $exe = Get-ChildItem -Path $build -Filter 'mousiki.exe' -Recurse |
 if (-not $exe) { throw "Build reported success but mousiki.exe was not found under $build" }
 
 # ---------------------------------------------------------------------------
+# SDL2.dll (optional): the scope and spectrogram windows
+# ---------------------------------------------------------------------------
+# Mousiki loads SDL2.dll at run time from the folder of mousiki.exe; nothing
+# else needs it, so a failed download only costs the two windows. Pinned and
+# checksummed like in packaging/release.py (keep the two in step).
+$sdlVersion = '2.32.10'
+$sdlSha256  = '6cf9706eefd0a4a06dc764007934d428afaf029fabdd408a9e646048c91e18fb'
+$sdlDll = Join-Path $exe.DirectoryName 'SDL2.dll'
+if ($SkipDeps) {
+    if (-not (Test-Path $sdlDll)) {
+        Write-Host "SDL2.dll not fetched (-SkipDeps): the scope / spectrogram windows need it next to mousiki.exe."
+    }
+} elseif (-not (Test-Path $sdlDll)) {
+    $sdlZipName = "SDL2-$sdlVersion-win32-x64.zip"
+    $sdlZip = Join-Path ([IO.Path]::GetTempPath()) $sdlZipName
+    try {
+        Write-Step "Fetching SDL2 $sdlVersion (scope and spectrogram windows)"
+        Invoke-WebRequest -UseBasicParsing -Uri "https://github.com/libsdl-org/SDL/releases/download/release-$sdlVersion/$sdlZipName" -OutFile $sdlZip
+        $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sdlZip).Hash.ToLowerInvariant()
+        if ($hash -ne $sdlSha256) { throw "SHA-256 mismatch for $sdlZipName (got $hash)" }
+        $sdlDir = Join-Path ([IO.Path]::GetTempPath()) "mousiki-sdl2-$sdlVersion"
+        Expand-Archive -LiteralPath $sdlZip -DestinationPath $sdlDir -Force
+        Copy-Item -LiteralPath (Join-Path $sdlDir 'SDL2.dll') -Destination $exe.DirectoryName -Force
+        $sdlReadme = Join-Path $sdlDir 'README-SDL.txt'
+        if (Test-Path $sdlReadme) { Copy-Item -LiteralPath $sdlReadme -Destination $exe.DirectoryName -Force }
+        Remove-Item -LiteralPath $sdlDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Step "SDL2.dll placed next to mousiki.exe"
+    } catch {
+        Write-Warning "Could not fetch SDL2 ($($_.Exception.Message)). Everything else works; for the scope / spectrogram windows copy SDL2.dll from $sdlZipName (github.com/libsdl-org/SDL/releases) next to mousiki.exe."
+    } finally {
+        Remove-Item -LiteralPath $sdlZip -Force -ErrorAction SilentlyContinue
+    }
+}
+
+# ---------------------------------------------------------------------------
 # Launchers: "mousiki" and "lala" (skip with -NoInstall)
 # ---------------------------------------------------------------------------
 # Two small .cmd files in %LOCALAPPDATA%\Mousiki\bin that start the built exe
