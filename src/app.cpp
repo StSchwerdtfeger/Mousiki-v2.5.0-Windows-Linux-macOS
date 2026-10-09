@@ -1818,6 +1818,14 @@ void App::poll_pending_load() {
     // feature off, matching what the settings label already claimed.
     if (settings_.element_lyrics) {
         launch_lyrics_fetch(pl.title, pl.artist, pl.path);
+    } else {
+        // nothing fetched for this track: the lyrics of the last one must not count as its own (the karaoke
+        // overlay fetches them itself when it opens, see karaoke_ensure_lyrics())
+        std::lock_guard<std::mutex> lock(lyrics_mutex_);
+        ++lyrics_epoch_;   // a fetch still running for the last track is discarded
+        lyrics_path_.clear();
+        lyrics_result_ = LyricsResult{};
+        lyrics_ready_ = false;
     }
 
     // This is the whole point of the redesign: play() is handed a
@@ -2581,6 +2589,10 @@ void App::commit_bulk_add(bool all) {
 static std::string pretty_key(const std::string& k) {
     if (k == "@SWITCHKEY") return mode_switch_key_label();   // the mode-switch key, named for this keyboard (keyboard_layout.h)
     if (k == "(" || k == ")") return symbol_key_label(k);   // SHIFT+8 / SHIFT+9 on a German keyboard
+    if (k == "@KARAOKESIZE") {   // the karaoke size keys * and _, named for this keyboard
+        const std::string up = mode_switch_key_label();
+        return up + " / " + (up == "*" ? "_" : up == "SHIFT and +" ? "SHIFT and -" : "SHIFT+-");
+    }
     if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return std::string("SHIFT+") + static_cast<char>(k[0] + 32);
     std::string o = k;
     size_t p = 0;
@@ -2632,6 +2644,8 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyDecreaseVolume", "Volume Down"},
     {nullptr, "HKeyToggleMute", "Toggle Mute"},
     {nullptr, "HKeyToggleNormalize", "Toggle Normalize"},
+    {nullptr, "HKeyNormMenu", "Normalization Tuning"}, // on/off, target level, max boost, live
+    {nullptr, "HKeySleepTimer", "Sleep Timer"},       // 15/30/60/90/120 min or stop after the current song
     // --- Navigation & View ---
     {"NAVIGATION & VIEW", "HKeyNavigateUp", "Navigate Up"},
     {nullptr, "HKeyNavigateDown", "Navigate Down"},
@@ -2639,21 +2653,21 @@ static const RefHotkeyRow kRefRows[] = {
     {nullptr, "HKeyFilterForFolder", "Filter By Folder"},
     {nullptr, "HKeyClearFilter", "Clear Filter"},
     {nullptr, "HKeyCycleSortMode", "Cycle Sort Mode"},
-    {nullptr, "HKeyRefreshUi", "Refresh UI"},
-    {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
-    {nullptr, "HKeyToggleLyrics", "Cycle Lyrics / Visual"},
-    {nullptr, "HKeyKaraoke", "Karaoke Overlay"},
     {nullptr, "HKeyToggleMetaOnly", "Show Metadata Only"}, // list rows: metadata instead of filename
-    {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
+    {nullptr, "HKeyToggleWaveform", "Toggle Waveform"},
     {nullptr, "HKeyListOverlay", "Big List Overlay"}, // larger LOCAL AUDIO FILES pane floated over the main UI
     {nullptr, "HKeyQueueOverlay", "Big Queue Overlay"}, // larger QUEUE pane floated over the main UI
-    {nullptr, "HKeyOscMenu", "Oscilloscope Tuning"},  // decay / dot threshold / tail brightness, live
-    {nullptr, "HKeyScopeWindow", "Scope Window"},     // the oscilloscope in its own (graphics card) window
-    {nullptr, "HKeySpectroWindow", "Spectrogram Window"}, // the spectrogram in its own (graphics card) window
+    {nullptr, "HKeyRefreshUi", "Refresh UI"},
+    // --- Lyrics & karaoke ---
+    {"LYRICS & KARAOKE", "HKeyToggleLyrics", "Cycle Lyrics / Visual"},
+    {nullptr, "HKeyRetryLyrics", "Retry Lyrics"},
+    {nullptr, "HKeyKaraoke", "Karaoke Overlay"},
+    // --- Visualizations ---
+    {"VISUALIZATIONS", "HKeyOscMenu", "Oscilloscope Tuning"},  // the SHIFT+o overlay, live
     {nullptr, "HKeySpectroMenu", "Spectrogram Options"},
     {nullptr, "HKeySpectroFull", "Spectrogram Full Screen"},
-    {nullptr, "HKeyNormMenu", "Normalization Tuning"}, // on/off, target level, max boost, live
-    {nullptr, "HKeySleepTimer", "Sleep Timer"},       // 15/30/60/90/120 min or stop after the current song
+    {nullptr, "HKeyScopeWindow", "Scope Window"},     // the oscilloscope in its own (graphics card) window
+    {nullptr, "HKeySpectroWindow", "Spectrogram Window"}, // the spectrogram in its own (graphics card) window
     // --- Search ---
     {"SEARCH", "HKeySearch", "Search Local"},
     {nullptr, "HKeySearchOnline", "Search Online"},
@@ -3255,7 +3269,8 @@ void App::settings_cycle(int dir) {
     if (settings_tab_ == 1 && settings_row_ >= 11 && settings_row_ <= 13) {
         static const char* const names[3] = {"lyrics", "oscilloscope", "spectrogram"};
         const bool on = settings_row_ == 11 ? settings_.use_lyrics : settings_row_ == 12 ? settings_.use_osci : settings_.use_spectro;
-        status_line_ = std::string(names[settings_row_ - 11]) + (on ? ": in the \".\" cycle" : ": switched off (not in the \".\" cycle; the windows SHIFT+8 / SHIFT+9 still work)");
+        status_line_ = std::string(names[settings_row_ - 11]) + (on ? ": in the \".\" cycle" : ": switched off (not in the \".\" cycle; full screen and the windows " +
+                                  hotkey_text("HKeySpectroWindow", "(") + " / " + hotkey_text("HKeyScopeWindow", ")") + " still work)");
         enforce_visual_switches();
     }
 }
@@ -9288,7 +9303,7 @@ void App::build_karaoke_screen(std::ostringstream& frame, int W, int H) {
     std::string message;
     {
         std::lock_guard<std::mutex> lock(lyrics_mutex_);
-        if (settings_.element_lyrics && lyrics_ready_) {
+        if (lyrics_ready_ && lyrics_path_ == current_path_) {   // the lyrics engine runs for the overlay in any case
             lines = lyrics_result_.lines;
             delay = lyrics_result_.delay;
             message = lyrics_result_.message;
@@ -9297,9 +9312,7 @@ void App::build_karaoke_screen(std::ostringstream& frame, int W, int H) {
     const double elapsed = has_track_ ? player_.poll_elapsed() : 0.0;
     if (!has_track_) {
         message = "Nothing is playing -- start a track and the lyrics appear here.";
-    } else if (!settings_.element_lyrics) {
-        message = "The lyrics engine is off -- close this overlay and press [" + hotkey_text("HKeyToggleLyrics", ".") + "] until the lyrics come back.";
-    } else if (!lyrics_ready_) {
+    } else if (!lyrics_ready_ || lyrics_path_ != current_path_) {
         message = "fetching lyrics ...";
     } else if (lines.empty() && message.empty()) {
         message = "No lyrics found for this track.";
@@ -9418,39 +9431,41 @@ void App::build_cheatsheet_screen(std::ostringstream& frame, int W) const {
         {nullptr, "HKeyDecreaseVolume", "Volume down"},
         {nullptr, "HKeyToggleMute", "Mute (without pausing)"},
         {nullptr, "HKeyToggleNormalize", "Toggle loudness normalization"},
-        // --- Navigation & View ---
+        {nullptr, "HKeyNormMenu", "Normalization overlay: on/off, target level, max boost live (toggle)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Normalization overlay: pick a value / change it   [SPACE] on/off   [R] reset   [ESC] close"},
+        {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min (optional fade-out over the last 10 %) or stop after this song (toggle)"},
+        {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it ('Fade out' toggles the fade)   [ESC] close (the Stop play mode is left alone)"},
+        // --- Navigation & View: moving around the lists and what they show ---
         {"NAVIGATION & VIEW (MAIN UI)", "HKeyNavigateUp", "Explore list (up)"},
         {nullptr, "HKeyNavigateDown", "Explore list (down)"},
-        {nullptr, "HKeySwitchBetweenCards", "Switch between panels"},
+        {nullptr, "HKeySwitchBetweenCards", "Switch between panels (list / queue)"},
         {nullptr, "HKeyFilterForFolder", "Filter by folder"},
         {nullptr, "HKeyClearFilter", "Clear filter"},
-        {nullptr, "HKeyCycleSortMode", "Cycle local list sort mode"},
-        {nullptr, "HKeyRefreshUi", "Refresh UI (redraw)"},
-        {nullptr, "HKeyKaraoke", "Karaoke overlay: the lyrics over the whole screen, sung words highlighted (toggle; playback keys keep working)"},
-        {nullptr, "#SHIFT and + / SHIFT and -", "Karaoke overlay: lyrics bigger / smaller, sizes 1-5 (the characters * and _; saved when the overlay closes)"},
-        {nullptr, "HKeyToggleWaveform", "Toggle waveform style (raw/smooth)"},
-        {nullptr, "HKeyToggleLyrics", "Cycle lyrics area: lyrics / sphere / oscilloscope / spectrogram"},
+        {nullptr, "HKeyCycleSortMode", "Cycle local list sort mode (folder order / title A-Z / artist A-Z)"},
         {nullptr, "HKeyToggleMetaOnly", "Toggle metadata-only track list (no filename)"},
-        {nullptr, "HKeyRetryLyrics", "Retry lyrics"},
+        {nullptr, "HKeyToggleWaveform", "Toggle waveform style (raw/smooth)"},
         {nullptr, "HKeyListOverlay", "Big list overlay: larger LOCAL AUDIO FILES pane (toggle)"},
         {nullptr, "HKeyQueueOverlay", "Big queue overlay: larger QUEUE pane (toggle; replaces the list overlay)"},
         {nullptr, "#SHIFT+UP/DOWN", "Big list / queue overlay: previous / next page (faster scrolling)"},
         {nullptr, "#ESC", "Big list / queue overlay: close (playback, queue and list keys keep working)"},
-        {nullptr, "HKeyOscMenu", "Oscilloscope overlay: style, frame rate, decay, dot threshold, tail ... live -- braille and image keep their own values (toggle)"},
-        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset   [ESC] close"},
+        {nullptr, "HKeyRefreshUi", "Refresh UI (redraw)"},
+        // --- Lyrics & karaoke ---
+        {"LYRICS & KARAOKE (MAIN UI)", "HKeyToggleLyrics", "Cycle the lyrics area: lyrics / sphere / oscilloscope / spectrogram (what is off on Settings > ON/OFF is skipped)"},
+        {nullptr, "HKeyRetryLyrics", "Retry lyrics: fetch them again with your own title / artist"},
+        {nullptr, "#" MUISC_LYRICS_KEY_UC, "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
+        {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
+        {nullptr, "HKeyKaraoke", "Karaoke overlay: the lyrics over the whole screen, sung words highlighted (toggle; fetches the lyrics even with the lyrics engine off; playback keys keep working)"},
+        {nullptr, "#@KARAOKESIZE", "Karaoke overlay: lyrics bigger / smaller, sizes 1-5 (the characters * and _; saved when the overlay closes)"},
+        // --- Visualizations: oscilloscope and spectrogram (in the lyrics area, full screen, in their own windows) ---
+        {"VISUALIZATIONS (MAIN UI)", "HKeyOscMenu", "Oscilloscope overlay: style, frame rate, music mode, decay, dot threshold, tail, glow, Z axis ... live -- braille and image keep their own values (toggle)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Oscilloscope overlay: pick a value / change it   [R] reset the style in use   [ESC] close"},
         {nullptr, "#OSCI MUSIC MODE", "Oscilloscope overlay row: unprocessed signal, fixed scale, no phase portrait -- for oscilloscope music (lossless files)"},
+        {nullptr, "HKeySpectroMenu", "Spectrogram options overlay: style, motion, scale, frequencies, gain, range, window, colors, time span ... (toggle)"},
+        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Spectrogram overlay: pick a value / change it   [R] Audacity defaults   [ESC] close"},
+        {nullptr, "HKeySpectroFull", "Spectrogram full screen with frequency labels and time ruler (toggle; ESC closes)"},
         {nullptr, "HKeyScopeWindow", "Scope window: the oscilloscope in its own window, drawn by the graphics card (toggle; needs SDL2)"},
         {nullptr, "HKeySpectroWindow", "Spectrogram window: the spectrogram in its own window, scrolling smoothly at the monitor's refresh rate (toggle; needs SDL2)"},
         {nullptr, "#F / F11 / T / ESC", "Scope / spectrogram window (keys inside it): fullscreen (also double-click) / always on top / close"},
-        {nullptr, "HKeySpectroMenu", "Spectrogram options overlay: style, motion, scale, frequencies, gain, range, window, colors ... (toggle)"},
-        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Spectrogram overlay: pick a value / change it   [R] Audacity defaults   [ESC] close"},
-        {nullptr, "HKeySpectroFull", "Spectrogram full screen with frequency labels (toggle; ESC closes)"},
-        {nullptr, "HKeyNormMenu", "Normalization overlay: on/off, target level, max boost live (toggle)"},
-        {nullptr, "#UP/DOWN  LEFT/RIGHT", "Normalization overlay: pick a value / change it   [SPACE] on/off   [R] reset   [ESC] close"},
-        {nullptr, "#" MUISC_LYRICS_KEY_UC, "Lyrics timing overlay: shift the lyrics earlier / later (toggle; only while synced lyrics are loaded)"},
-        {nullptr, "#LEFT/RIGHT  UP/DOWN", "Lyrics timing overlay: -/+ 0.1 s / -/+ 0.5 s   [R] reset   [ENTER] save to the .lrc   [ESC] cancel"},
-        {nullptr, "HKeySleepTimer", "Sleep timer overlay: pause after 15/30/60/90/120 min (optional fade-out over the last 10 %) or stop after this song (toggle)"},
-        {nullptr, "#UP/DOWN  ENTER", "Sleep timer overlay: pick an entry / set it ('Fade out' toggles the fade)   [ESC] close (the Stop play mode is left alone)"},
         // --- Search ---
         {"SEARCH (MAIN UI)", "HKeySearch", "Search local folder"},
         {nullptr, "HKeySearchOnline", "Search online (YouTube)"},
@@ -11039,6 +11054,19 @@ std::string App::overlay_cells(const std::string& line, int x, const std::string
     return out;
 }
 
+// The karaoke overlay uses the lyrics engine whatever the main screen does: with the engine off there (".", Settings ->
+// ON/OFF, Use Lyrics) nothing was fetched for the playing track, so the overlay starts the fetch itself -- once per
+// track, also after a track change while it is open. The main screen's setting is left as it is.
+void App::karaoke_ensure_lyrics() {
+    if (!has_track_ || current_path_.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(lyrics_mutex_);
+        if (lyrics_path_ == current_path_) return;   // fetched (or being fetched) for this track
+    }
+    std::string artist = (metadata_.artist == "-") ? "" : metadata_.artist;
+    launch_lyrics_fetch(metadata_.name, artist, current_path_);
+}
+
 std::string App::render_frame(TerminalIO& term) {
     frame_main_len_ = std::string::npos;   // set by the main screen: where its line part ends (the overlays follow)
     spectro_used_ = false;
@@ -11178,6 +11206,7 @@ std::string App::render_frame(TerminalIO& term) {
     }
 
     if (mode_ == Mode::Karaoke) {
+        karaoke_ensure_lyrics();   // the karaoke overlay always has the lyrics engine, whatever the main screen uses
         std::ostringstream frame;
         frame << "\x1b[2J\x1b[H\x1b[?25l";
         build_karaoke_screen(frame, W, term_rows_ - 1);
