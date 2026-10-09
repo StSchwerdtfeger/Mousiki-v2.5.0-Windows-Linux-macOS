@@ -57,6 +57,12 @@ CLOUD_ASSET = "mousiki-source.zip"
 RELEASE_ARTIFACT = "mousiki-release"       # the workflow's final artifact: packages + signatures
 APPID_GUID = "{8F6B2C1E-3A4D-4B7E-9C15-6D2E0A7F5B38}"   # keep fixed: upgrades install over the old version
 PYLIB_PACKAGES = ["requests", "urllib3", "idna", "certifi", "charset-normalizer"]
+# SDL2 for the scope and spectrogram windows: Mousiki loads SDL2.dll at run time from the folder of mousiki.exe.
+# Pinned and checksummed (SDL publishes no checksum file). To update, change both lines together:
+# the SHA-256 of SDL2-<version>-win32-x64.zip from https://github.com/libsdl-org/SDL/releases
+SDL2_VERSION = "2.32.10"
+SDL2_WIN64_SHA256 = "6cf9706eefd0a4a06dc764007934d428afaf029fabdd408a9e646048c91e18fb"
+THIRD_PARTY_LICENSES = "THIRD_PARTY_LICENSES.txt"   # licence texts of the code compiled into mousiki / fpcalc
 
 
 # --------------------------------------------------------------------------
@@ -206,6 +212,16 @@ def verify_sha256(dest, checksum_url, filename=None):
     return True
 
 
+def verify_pinned_sha256(dest, want):
+    """Compare a download with a checksum pinned in this script; a mismatch deletes it and stops the build."""
+    dest = Path(dest)
+    got = sha256_of(dest)
+    if got != want.lower():
+        dest.unlink()
+        die("SHA-256 mismatch for %s (expected %s, got %s) - the download was deleted" % (dest.name, want, got))
+    log("SHA-256 verified: " + dest.name)
+
+
 def make_zip(src_dir, dest_zip, root_name):
     """Zip src_dir as <root_name>/... keeping Unix exec bits."""
     src_dir, dest_zip = Path(src_dir), Path(dest_zip)
@@ -345,21 +361,14 @@ def detect_version(src, override):
 
 
 def sync_version(src, version, cmake_ver):
-    """Patch the *work copy* (never your zip) so CMake/About screen show the release version."""
+    """Patch the *work copy* (never your zip) so CMake and the About screens show the release version.
+    The About screens of the player and the radio get it from CMakeLists.txt (MOUSIKI_VERSION, src/version.h),
+    so the project() line is the only thing to patch."""
     if not cmake_ver or cmake_ver == version:
         return
     cm = src / "CMakeLists.txt"
     t = cm.read_text(encoding="utf-8")
     cm.write_text(re.sub(r"(project\s*\(\s*\w+\s+VERSION\s+)[\d.]+", r"\g<1>" + version, t, count=1, flags=re.I), encoding="utf-8")
-    st = src / "src" / "settings.cpp"
-    if st.is_file():
-        s = st.read_text(encoding="utf-8")
-        old, new = "v" + cmake_ver, "v" + version
-        if old in s:
-            if len(old) == len(new):      # About box is column-aligned: only same-length swaps are safe
-                st.write_text(s.replace(old, new), encoding="utf-8")
-            else:
-                warn("About-screen version string has a different length; left unpatched")
     log("Patched build copy: version %s -> %s" % (cmake_ver, version))
 
 
@@ -394,7 +403,9 @@ def stage_common(stage, src, exe, target):
     fp = "fpcalc.exe" if target == "windows" else "fpcalc"
     if not (stage / "scripts" / fp).is_file():
         warn("fpcalc was not built - the AcoustID metadata fetch will not work")
-    for name in ("LICENSE", "README.md", "config.txt"):
+    if not (src / THIRD_PARTY_LICENSES).is_file():
+        warn("%s is missing from the source tree - the packages ship without the third-party licence texts" % THIRD_PARTY_LICENSES)
+    for name in ("LICENSE", THIRD_PARTY_LICENSES, "README.md", "config.txt"):
         if (src / name).is_file():
             shutil.copy2(str(src / name), str(stage / name))
     # radio mode: the default station list and radio settings sit next to the executable (CMake copies them there)
@@ -411,8 +422,7 @@ def stage_common(stage, src, exe, target):
     if target == "windows" and (src / "mousiki.ico").is_file():
         shutil.copy2(str(src / "mousiki.ico"), str(stage / "mousiki.ico"))
     if os.name != "nt":
-        for p in (stage / "app").iterdir():
-            make_exec(p)
+        make_exec(stage / "app" / exe_name)        # not the .txt files next to it
         for p in (stage / "scripts").iterdir():
             if p.name == "fpcalc":
                 make_exec(p)
@@ -578,6 +588,24 @@ def bundle_windows_tools(stage, dl, a):
         pth.write_text("\n".join(lines) + "\n", encoding="utf-8")
     notices.append("Python %s embeddable (PSF licence) - https://www.python.org" % pyver)
 
+    # SDL2 for the scope / spectrogram windows: next to mousiki.exe, where LoadLibrary looks first ---------
+    if python_arch_tag() == "amd64":
+        sdl_name = "SDL2-%s-win32-x64.zip" % SDL2_VERSION
+        sz = fetch("https://github.com/libsdl-org/SDL/releases/download/release-%s/%s" % (SDL2_VERSION, sdl_name),
+                   dl / sdl_name, a.refresh_tools)
+        verify_pinned_sha256(sz, SDL2_WIN64_SHA256)
+        with zipfile.ZipFile(str(sz)) as zf:
+            names = {n.split("/")[-1]: n for n in zf.namelist()}
+            if "SDL2.dll" not in names:
+                die("SDL2.dll not found in %s" % sdl_name)
+            (stage / "app" / "SDL2.dll").write_bytes(zf.read(names["SDL2.dll"]))
+            if "README-SDL.txt" in names:
+                (stage / "app" / "README-SDL.txt").write_bytes(zf.read(names["README-SDL.txt"]))
+        notices.append("SDL2 %s (zlib licence, see %s) - https://www.libsdl.org - app/SDL2.dll, "
+                       "used by the scope and spectrogram windows" % (SDL2_VERSION, THIRD_PARTY_LICENSES))
+    else:
+        warn("no SDL2 build for this architecture is bundled - the scope / spectrogram windows need SDL2.dll next to mousiki.exe")
+
     if build_pylib(stage / "pylib", dl, a.refresh_tools):
         notices.append("requests, urllib3, idna, certifi, charset-normalizer (Apache-2.0 / MIT / MPL-2.0 / BSD) - https://pypi.org")
     write_notices(stage, notices)
@@ -636,7 +664,9 @@ def write_notices(stage, lines):
     body = ("Third-party components bundled with this Mousiki package\n"
             "=====================================================\n"
             "Mousiki itself is Apache-2.0 licensed (see LICENSE).\n"
-            "The tools below are downloaded unmodified from their upstream projects at build time.\n\n")
+            "The code compiled into mousiki and fpcalc (miniaudio, KISS FFT, miniz, Chromaprint) is listed\n"
+            "with its licence texts in %s.\n"
+            "The tools below are downloaded unmodified from their upstream projects at build time.\n\n" % THIRD_PARTY_LICENSES)
     write_text(stage / "THIRD-PARTY.txt", body + "".join("- %s\n" % l for l in lines))
 
 
@@ -658,11 +688,13 @@ def portable_readme(target, version):
         body = ("Unzip anywhere and run  ./mousiki  (or  ./lala)  in a UTF-8 terminal.\n"
                 "ffmpeg and yt-dlp are included. python3 must be installed (Ubuntu: 'sudo apt install python3').\n"
                 "Audio goes through PulseAudio/PipeWire-pulse or ALSA.\n"
+                "The scope and spectrogram windows need SDL2 (Ubuntu: 'sudo apt install libsdl2-2.0-0').\n"
                 "If the executable bit was lost on extraction:  chmod +x mousiki lala app/mousiki bin/* scripts/fpcalc\n")
     else:
         body = ("Unzip anywhere and run  ./mousiki  (or  ./lala)  in Terminal / iTerm.\n"
                 "yt-dlp is included. ffmpeg is NOT:  brew install ffmpeg\n"
                 "python3 comes with the Xcode Command Line Tools (xcode-select --install).\n"
+                "The scope and spectrogram windows need SDL2:  brew install sdl2\n"
                 "The binaries are not notarized. If macOS blocks them:  xattr -dr com.apple.quarantine <folder>\n")
     return head + body + "\n" + PORTABLE_TXT
 
@@ -1025,6 +1057,8 @@ def build_deb(stage, ws, dist, version):
     write_text(root / "etc" / "xdg" / "menus" / "applications-merged" / "mousiki.menu", DEB_MENU)
     if (stage / "LICENSE").is_file():
         shutil.copy2(str(stage / "LICENSE"), str(doc / "copyright"))
+    if (stage / THIRD_PARTY_LICENSES).is_file():
+        os.symlink("/opt/mousiki/" + THIRD_PARTY_LICENSES, str(doc / THIRD_PARTY_LICENSES))
     for dp, dns, fns in os.walk(str(root)):
         os.chmod(dp, 0o755)
         for fn in fns:
@@ -1041,8 +1075,8 @@ Architecture: %s
 Installed-Size: %d
 Maintainer: Mousiki release toolkit <noreply@localhost>
 Depends: libc6, libstdc++6, python3, ffmpeg, curl, libasound2 | libasound2t64, libpulse0
-Recommends: pulseaudio-utils | pipewire-pulse, xclip | wl-clipboard, python3-requests, xdg-utils
-Homepage: https://github.com/StSchwerdtfeger/Mousiki-Windows-Native-Port
+Recommends: pulseaudio-utils | pipewire-pulse, xclip | wl-clipboard, python3-requests, xdg-utils, libsdl2-2.0-0
+Homepage: https://github.com/StSchwerdtfeger/Mousiki-v3.0.0-Music-and-Radio-Player
 Description: Terminal music player and online radio (TUI)
  Mousiki plays local files and online sources (via the bundled yt-dlp) in the
  terminal, with spectrum/oscilloscope visualizers, synced lyrics, an equalizer,
@@ -1535,7 +1569,7 @@ def main():
     common.add_argument("--refresh-tools", action="store_true", help="re-download ffmpeg / yt-dlp / Python / requests")
     common.add_argument("--no-bundle-tools", action="store_true", help="do not bundle ffmpeg/yt-dlp/Python (much smaller, relies on PATH)")
     common.add_argument("--install-deps", action="store_true", help="install missing build tools (winget / apt / brew)")
-    common.add_argument("--sync-version", action="store_true", help="patch CMakeLists/About-screen version in the build copy")
+    common.add_argument("--sync-version", action="store_true", help="patch the CMakeLists.txt version (and so the About screens) in the build copy")
     common.add_argument("--python-embed-version", default=DEFAULT_PY_EMBED, help="Windows embedded Python version")
     common.add_argument("--mac-arch", choices=["universal", "native"], default="universal")
     common.add_argument("--sign-identity", help="macOS codesign identity (default: ad-hoc)")
