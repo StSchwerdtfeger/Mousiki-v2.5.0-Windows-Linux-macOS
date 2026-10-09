@@ -202,7 +202,8 @@ int spectro_window_main() {
             } else if (type == sdl::kEvKeyDown) {
                 int32_t sym;
                 std::memcpy(&sym, ev + 20, 4);
-                if (sym == sdl::kKeyEsc || sym == 'q' || sym == '8') quit = true;   // 8: SHIFT+8 closes it as in the terminal
+                // 8 / 9: the key of "(" (German SHIFT+8, English SHIFT+9) closes it as in the terminal
+                if (sym == sdl::kKeyEsc || sym == 'q' || sym == '8' || sym == '9') quit = true;
                 else if (sym == 'f' || sym == sdl::kKeyF11) {
                     const bool full = (A.GetWindowFlags(win) & sdl::kWinFullscreenDesktop) == sdl::kWinFullscreenDesktop;
                     A.SetWindowFullscreen(win, full ? 0 : sdl::kWinFullscreenDesktop);

@@ -1117,7 +1117,6 @@ private:
     // read back with the lyrics), ESC / Alt+L = cancel (the value from before the
     // overlay opened comes back). Opens only while synced lyrics are loaded.
     double lyrics_edit_orig_delay_ = 0.0;               // delay when the overlay opened (ESC restores it)
-    void karaoke_ensure_lyrics();   // the karaoke overlay fetches the lyrics itself when the engine is off
     fs::path lyrics_path_;                              // track path the current lyrics belong to (sidecar location)
     static constexpr int kLyricsEditPanelWidth = 60;
     void lyrics_edit_open();

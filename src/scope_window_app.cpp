@@ -289,7 +289,8 @@ int scope_window_main() {
             } else if (type == sdl::kEvKeyDown) {
                 int32_t sym;
                 std::memcpy(&sym, ev + 20, 4);
-                if (sym == sdl::kKeyEsc || sym == 'q' || sym == '9') quit = true;   // 9: SHIFT+9 closes it as in the terminal
+                // 9 / 0: the key of ")" (German SHIFT+9, English SHIFT+0) closes it as in the terminal
+                if (sym == sdl::kKeyEsc || sym == 'q' || sym == '9' || sym == '0') quit = true;
                 else if (sym == 'f' || sym == sdl::kKeyF11) {
                     const bool full = (A.GetWindowFlags(win) & sdl::kWinFullscreenDesktop) == sdl::kWinFullscreenDesktop;
                     A.SetWindowFullscreen(win, full ? 0 : sdl::kWinFullscreenDesktop);
