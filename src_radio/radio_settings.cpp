@@ -1,4 +1,5 @@
 #include "radio_settings.h"
+#include "version.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -458,7 +459,7 @@ const KeyAction kKeyActions[] = {
     {nullptr, "SpectroFull", "Spectrogram Full Screen", "U"},
     {nullptr, "NormMenu", "Normalization Overlay", "V"},
     {nullptr, "EqMenu", "Equalizer Overlay", "E"},
-    {nullptr, "ScopeToggle", "Switch Osci / Sphere", "."},   // "." like the player's lyrics-area cycle (was "o" up to v3.0.0)
+    {nullptr, "ScopeToggle", "Cycle Osci / Sphere / Spectro", "."},   // "." like the player's lyrics-area cycle (was "o" up to v3.0.0)
     {"TIMESHIFT", "Pause", "Pause / Resume (keeps buffering)", "SPACE"},
     {nullptr, "Back30", "Back 30 Seconds", "["},
     {nullptr, "Fwd30", "Forward 30 Seconds", "]"},
@@ -526,19 +527,19 @@ const char* const kAboutLines[] = {
     "focused TUI with no unnecessary interface layers. A terminal ",
     "music player built for people who prefer control.",
     "",
-    "Devloper : ender                         Github   : itzender5820",
-    "Email    : itz.ender5820@gmail.com",
-    "Version  : original and final v1.0       Licence  : Apache licence 2.0",
+    "Developer : ender                         Github   : itzender5820",
+    "Email     : itz.ender5820@gmail.com",
+    "Version   : original and final v1.0       Licence  : Apache licence 2.0",
     "",
-    "Windows port : Steffen Schwerdtfeger     Github   : StSchwerdtfeger",
-    "Version      : v3.0.0                    Licence  : Apache licence 2.0",
+    "Windows Port / Modification : Steffen Schwerdtfeger     Github   : StSchwerdtfeger",
+    "Version                     : v" MOUSIKI_VERSION "                    Licence  : Apache licence 2.0",
     "",
     "Adjusted to also run on Windows. Several features and modifications were",
-    "added, the general design remained. Additions: playlist menu, meta data ",
-    "editor incl. fetch meta data function via AcoustID, listening history, ",
-    "big list/queue overlays, equalizer, YX mode oscillator several new hot ",
-    "keys and then some... See Readme.md for full list of additions and changes ",
-    "along the win native port. Done with the help of AI tools.",
+    "added, the general design remained. Additions: radio mode, playlist menu, ",
+    "meta data editor incl. fetch meta data function via AcoustID, listening ",
+    "history, big list/queue overlays, equalizer, YX mode oscillator several ",
+    "new hot keys and then some... See Readme.md for full list of additions ",
+    "and changes along the win native port. Done with the help of AI tools.",
 };
 const int kAboutLineCount = static_cast<int>(sizeof(kAboutLines) / sizeof(kAboutLines[0]));
 
@@ -693,7 +694,7 @@ RadioSettings load_radio_settings(std::string* source_out) {
     if (auto v = get("VisualizerFluidity")) s.visualizer_fluidity = as_int(*v, s.visualizer_fluidity, 1, 10);
     if (auto v = get("VisualizerDegradationSpeed")) s.visualizer_degradation_speed = as_int(*v, s.visualizer_degradation_speed, 1, 10);
     if (auto v = get("VisualizerViscosity")) s.visualizer_viscosity = as_int(*v, s.visualizer_viscosity, 0, 10);
-    // Up to v3.1 one frame rate and one music mode for both styles: they become the starting value of both.
+    // Up to v3.0.0 one frame rate and one music mode for both styles: they become the starting value of both.
     auto fps_snap = [](int fr) { return fr >= 143 ? 165 : fr >= 105 ? 120 : fr >= 75 ? 90 : fr >= 52 ? 60 : fr >= 38 ? 45 : 30; };
     if (auto v = get("FrameRate")) s.osci_set[0].frame_rate = s.osci_set[1].frame_rate = fps_snap(as_int(*v, 30, 30, 165));
     if (auto v = get("OsciMusicMode")) s.osci_set[0].music = s.osci_set[1].music = as_bool(*v, false);
