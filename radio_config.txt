@@ -70,10 +70,14 @@ ColorTabOther=90
 OnAirAscii=true
 PulseWave=true
 DummyButtons=true
-# right of the station info: osci | sphere | off
-OsciSphere=osci
+# right of the station info: osci | sphere | off | spectro
+OsciSphere=spectro
 Visualizer=true
 StereoSound=true
+# false = left out entirely: not in the "." cycle of the scope block (the sphere always is); the windows
+# (SHIFT+8 spectrogram, SHIFT+9 oscilloscope) work either way
+UseOscilloscope=true
+UseSpectrogram=true
 # static that fades in when another station is tuned and fades out when the stream plays
 TuneNoise=false
 # loudness normalisation (SHIFT+V overlay, v toggles): target -40..0 LUFS, max boost 0..24 dB
