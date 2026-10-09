@@ -549,7 +549,7 @@ The karaoke picture sits on **both sides**, with four empty columns between each
 - The overlay always uses the lyrics engine, **also when it is off on the main screen** (`.`, Settings → ON/OFF → Lyrics Engine or Use Lyrics): it then fetches the lyrics of the playing track itself -- and again after a track change while it is open -- without changing that setting, so the main screen keeps its visual. While they are being fetched, or when none were found, the overlay says so.
 - Synced lyrics follow the timing correction of the lyrics timing overlay (`ALT+L`). Lyrics without timestamps are scrolled along with the song.
 
-![Karaoke mode](images/Karaoke_mode.png)
+![Karaoke mode](images/karaoke_mode.png)
 
 
 ### Sleep timer overlay (`SHIFT+z`)
