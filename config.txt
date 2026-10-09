@@ -68,14 +68,65 @@ UseLyrics=true
 UseOscilloscope=true
 UseSpectrogram=true
 ## false = left out entirely: not in the "." cycle of the lyrics area (the sphere always is). The windows
-## (SHIFT+8 spectrogram, SHIFT+9 oscilloscope) work either way.
-OsciDecay=0.8
-## afterglow, 0.00 to 0.99 (higher = longer trails)
+## (SHIFT+8 spectrogram, SHIFT+9 oscilloscope on a German keyboard) and the full screen (SHIFT+u) work either way.
+## Oscilloscope (SHIFT+o overlay), one block per style: braille = Osci<name>, image = OsciImage<name>. Each style keeps its own values.
+## Decay = afterglow 0.00-0.99 | DotThreshold 0.01-1.00 (braille: lower = thicker line) | TailBrightness 0.00-1.00 | Interpolation = connect the
+## samples with lines | ZAxis = beam intensity (ZDepth 0-1, ZSource speed|level) | TraceLength 128-1024 samples | Rotate = 45 degrees (mid vertical) |
+## MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom) |
+## FrameRate = screen refresh while that style is in use: 30 | 45 | 60 | 90 | 120 | 165 | MusicMode = oscilloscope music mode (the scopes
+## get the decoded signal itself, no EQ / normalization / volume, at a fixed scale and without the phase portrait)
+OsciDecay=0.80
 OsciDotThreshold=0.28
-## 0.01 to 1.00 (lower = thicker line)
 OsciTailBrightness=0.45
-## 0.00 to 1.00 (brightness of the oldest part of the trace)
-## Tune these three live with SHIFT+o in the main UI
+OsciInterpolation=true
+OsciZAxis=false
+OsciZDepth=0.70
+OsciZSource=speed
+OsciTraceLength=1024
+OsciRotate=false
+OsciMonoPhase=true
+OsciPalette=gradient
+OsciGlow=0.60
+OsciFrameRate=30
+OsciMusicMode=false
+OsciImageDecay=0.80
+OsciImageDotThreshold=0.28
+OsciImageTailBrightness=0.45
+OsciImageInterpolation=true
+OsciImageZAxis=false
+OsciImageZDepth=0.70
+OsciImageZSource=speed
+OsciImageTraceLength=1024
+OsciImageRotate=false
+OsciImageMonoPhase=true
+OsciImagePalette=gradient
+OsciImageGlow=0.60
+OsciImageFrameRate=30
+OsciImageMusicMode=false
+## braille | image (a real pixel picture drawn by the terminal: Kitty graphics or Sixel; braille where there is neither)
+OsciStyle=braille
+## image style: auto | kitty | sixel | off, and the pixels of one terminal cell (WxH, empty = ask the terminal)
+OsciImageProtocol=auto
+## image style: full | half | third of the screen resolution (lower = less work and data per frame, a softer and wider beam)
+OsciImageResolution=half
+## Spectrogram (SHIFT+i overlay, SHIFT+u full screen). The defaults are Audacity's: mel scale 0-20000 Hz, gain 20,
+## range 80, window 2048 (hann), zero padding 2, colors roseus. Style braille|image, Motion sweep|scroll,
+## Scale linear|logarithmic|mel|bark|erb|period, Colors roseus|classic|grayscale|gradient, Channels both|mix, TimeSpan 5-60 s (steps of 5)
+SpectroStyle=image
+SpectroMotion=sweep
+SpectroScale=mel
+SpectroMinFreq=0
+SpectroMaxFreq=20000
+SpectroGain=20
+SpectroRange=80
+SpectroFrequencyGain=0
+SpectroWindowSize=2048
+SpectroZeroPadding=2
+SpectroColors=roseus
+SpectroChannels=both
+SpectroTimeSpan=30
+SpectroLabels=true
+## Tune the Osci values live with SHIFT+o and the Spectro values with SHIFT+i in the main UI
 Visualizer=true
 MetaDataOnly=false
 ## true  = the (search-)lists show embedded metadata only -- the title tag is used
@@ -161,6 +212,12 @@ ConsoleVerbosity=basic
 ##             AUTOSAVE / SESSION SNAPSHOT
 ##-------------------------------------------
  
+SleepFade=true
+## sleep timer (SHIFT+z): fade the volume out over the last 10 % of the time (30 s .. 10 min), then pause
+SidPlayLength=180
+## SID tunes (C64) are rendered by sidplayfp for this many seconds (10 .. 1800)
+KaraokeLyricsSize=1
+## karaoke overlay (k): lyrics size 1 (normal text) .. 5; the characters * and _ change it there
 AutoSave=true
 ## resumes the exact song/position/queue/repeat/shuffle next launch.
 ## Snapshot file (Windows): %USERPROFILE%\.cache\mousiki\snapshot\snapshot.json
@@ -293,6 +350,8 @@ HKeyQueueMoveTop="$"
 HKeyQueueMoveBottom="%"
 HKeySearchFolder="/f:"
 HKeyOscMenu="O"
+HKeySpectroMenu="I"
+HKeySpectroFull="U"
 HKeyScopeWindow=")"
 HKeySpectroWindow="("
 HKeyNormMenu="V"
@@ -324,7 +383,7 @@ Email     : itz.ender5820@gmail.com
 Version   : original and final v1.0       Licence  : Apache licence 2.0
  
 Windows Port / Modification : Steffen Schwerdtfeger     Github   : StSchwerdtfeger
-Version                     : v3.0.0                    Licence  : Apache licence 2.0
+Version                     : v3.1.0                    Licence  : Apache licence 2.0
  
 Adjusted to also run on Windows. Several features and modifications were
 added, the general design remained. Additions: radio mode, playlist menu, 
