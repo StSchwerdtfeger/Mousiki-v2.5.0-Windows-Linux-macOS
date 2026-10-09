@@ -8,6 +8,7 @@
 // with UiModel::settings.open it is the RADIO SETTINGS screen (key `s`; tabs COLORS and ON/OFF).
 // Every colour comes from the radio's own radio_config.txt (RadioSettings, radio_settings.h) -- nothing is read from
 // the music player's config.txt.
+#include "scope_window.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -233,7 +234,13 @@ struct UiModel {
     mutable int pmarquee_row = -1;       // the tuned preset entry whose name scrolls in the PRESETS pane (-1 = none)
     mutable double pmarquee_since = 0.0;
     // Small overlay over the main screen: 1 = oscilloscope tuning (SHIFT+o), 2 = loudness normalisation (SHIFT+v).
-    int overlay = 0;                // 3 = sleep timer (SHIFT+z), 4 = equaliser (SHIFT+e), 5 = record (y)
+    int overlay = 0;                // 3 = sleep timer (SHIFT+z), 4 = equaliser (SHIFT+e), 5 = record (y), 6 = spectrogram (SHIFT+i)
+    // Spectrogram: full screen (SHIFT+u); where this frame put its picture (row, col, cols, rows; row -1 = none), the
+    // cell rectangle an overlay covers, and whether one was drawn at all (else the feed is switched off).
+    bool spectro_full = false;
+    mutable int spectro_area[4] = {-1, 0, 0, 0};
+    mutable int spectro_skip[4] = {0, 0, 0, 0};
+    mutable bool spectro_used = false;
     // Record overlay (y): the stream position and the buffered time when it opened, so "from now on" is exactly then.
     long long rec_anchor = 0;
     double rec_avail_sec = 0.0;     // how far back from rec_anchor the buffer reaches
@@ -272,6 +279,11 @@ struct UiModel {
     SignWave wave;
     double dt = 0.033;            // seconds since the previous frame (visualizer motion)
 };
+
+// The scope window's settings, colours and title for the radio (src/scope_window.h).
+void fill_scope_window_config(const RadioSettings& cfg, const RadioStatus& st, ScopeWinConfig& c);
+// The spectrogram window's settings, colours and title for the radio.
+void fill_spectro_window_config(const RadioSettings& cfg, const RadioStatus& st, SpectroWinConfig& c);
 
 std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus& st,
                                             RadioEngine& engine, const RadioSettings& cfg);

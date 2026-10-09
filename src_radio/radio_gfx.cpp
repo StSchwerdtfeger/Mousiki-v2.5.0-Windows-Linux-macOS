@@ -47,8 +47,8 @@ void shade(const GfxFrame& f, uint8_t level, uint8_t hue, float& r, float& g, fl
 }
 
 std::string kitty_emit(const GfxFrame& f) {
-    const int cw = f.w / std::max(1, f.cols);
-    const int cropx = std::clamp(f.crop, 0, f.cols) * cw;
+    // crop in picture pixels (the picture may be smaller than the cells: the terminal scales it to c x r cells)
+    const int cropx = static_cast<int>(static_cast<long long>(std::clamp(f.crop, 0, f.cols)) * f.w / std::max(1, f.cols));
     const int vis_cols = f.cols - std::clamp(f.crop, 0, f.cols);
     if (vis_cols <= 0) return gfx_clear(GfxProto::Kitty);
     std::vector<uint8_t> rgba(static_cast<size_t>(f.w) * f.h * 4);
@@ -84,60 +84,122 @@ std::string kitty_emit(const GfxFrame& f) {
 }
 
 // ---- Sixel: 16 colours (from the hue) x 15 brightness steps; pixels below the threshold stay transparent (P2 = 1) ----
+// Written for speed, because it runs every frame: one pass per 6-row band collects the bit columns of only the colours
+// that occur in that band, each colour line stops at its last pixel, and runs (also the empty start) are length-coded.
+// A picture smaller than the screen area (scale > 1) is enlarged here: columns by repeating them (cheap, the run-length
+// code absorbs it), rows through the pixel aspect ratio where the terminal honours it (Windows Terminal), else by
+// repeating them as well.
+bool sixel_aspect_ok() {
+    static const bool ok = std::getenv("WT_SESSION") != nullptr || std::getenv("MOUSIKI_SIXEL_ASPECT") != nullptr;
+    return ok;
+}
+
+inline void put_int(std::string& o, int v) {
+    char b[12];
+    int n = 0;
+    if (v == 0) { o += '0'; return; }
+    while (v > 0) { b[n++] = static_cast<char>('0' + v % 10); v /= 10; }
+    while (n > 0) o += b[--n];
+}
+inline void put_run(std::string& o, int run, char ch) {
+    if (run <= 0) return;
+    if (run > 3) { o += '!'; put_int(o, run); o += ch; }
+    else o.append(static_cast<size_t>(run), ch);
+}
+
 std::string sixel_emit(const GfxFrame& f) {
-    static std::string cache;
-    const int cw = f.w / std::max(1, f.cols);
-    const int cropx = std::clamp(f.crop, 0, f.cols) * cw;
-    const int vis_cols = f.cols - std::clamp(f.crop, 0, f.cols);
-    if (vis_cols <= 0) return "";
-    if (!f.fresh) return cache;   // no new picture this frame (the cells were written over): draw the last one again
-    const int W = f.w - cropx, H = f.h;
-    std::vector<uint8_t> idx(static_cast<size_t>(W) * H, 0);   // 0 = transparent, else 1 + hue16 * 15 + (step - 1)
-    for (int y = 0; y < H; ++y)
-        for (int x = 0; x < W; ++x) {
-            const size_t at = static_cast<size_t>(y) * f.w + cropx + x;
-            const int step = static_cast<int>(std::lround(curve(static_cast<float>(f.level[at]) / 255.0f) * 15.0f));
-            if (step < 1) continue;
-            idx[static_cast<size_t>(y) * W + x] = static_cast<uint8_t>(1 + (f.hue[at] >> 4) * 15 + (step - 1));
-        }
-    std::string o = at_cell(f.row, f.col + (f.cols - vis_cols));
-    o += "\x1bP0;1;0q\"1;1;" + std::to_string(W) + ";" + std::to_string(H);
-    for (int hb = 0; hb < 16; ++hb)
-        for (int st = 1; st <= 15; ++st) {
-            const float l = static_cast<float>(st) / 15.0f;
-            const float hot = std::clamp((l - 0.80f) / 0.20f, 0.0f, 1.0f) * 0.40f;
-            const auto& p = f.pal[static_cast<size_t>(hb * 16 + 8)];
-            auto ch = [&](int c) { return static_cast<int>(std::lround(((static_cast<float>(p[static_cast<size_t>(c)]) * (1.0f - hot) + 255.0f * hot) * l) / 255.0f * 100.0f)); };
-            o += "#" + std::to_string(1 + hb * 15 + st - 1) + ";2;" + std::to_string(ch(0)) + ";" + std::to_string(ch(1)) + ";" + std::to_string(ch(2));
-        }
+    static std::string pal_text;
+    static std::array<std::array<uint8_t, 3>, 256> pal_seen{};
+    static bool pal_valid = false;
+    static std::vector<uint8_t> bits;           // per colour: one 6-bit mask per output column (kept zeroed between bands)
+    static std::vector<int> minx(256), maxx(256);
+    const int cols = std::max(1, f.cols);
+    const int crop = std::clamp(f.crop, 0, f.cols);
+    const int vis_cols = f.cols - crop;
+    if (vis_cols <= 0 || f.w <= 0 || f.h <= 0) return "";
+    // No new picture: nothing to send. The text frame skips the picture's cells (gfx_fill_holes), so the last
+    // picture stays on screen untouched -- sending it again every frame only flooded the terminal.
+    if (!f.fresh) return "";
+    const int ocw = f.out_cw > 0 ? f.out_cw : std::max(1, f.w / cols);
+    const int och = f.out_ch > 0 ? f.out_ch : std::max(1, f.h / std::max(1, f.rows));
+    const int scale = std::max(1, f.scale);
+    const int full_w = cols * ocw, full_h = std::max(1, f.rows) * och;
+    const int W = vis_cols * ocw;                                    // output columns (screen pixels)
+    const int pan = (scale > 1 && sixel_aspect_ok()) ? scale : 1;    // screen rows per sixel row
+    const int H = (full_h + pan - 1) / pan;                          // sixel rows
+    // output column -> picture column, sixel row -> picture row (nearest neighbour)
+    std::vector<int> xs(static_cast<size_t>(W)), ys(static_cast<size_t>(H));
+    for (int x = 0; x < W; ++x) xs[static_cast<size_t>(x)] = std::min(f.w - 1, static_cast<int>(static_cast<long long>(crop * ocw + x) * f.w / full_w));
+    for (int y = 0; y < H; ++y) ys[static_cast<size_t>(y)] = std::min(f.h - 1, static_cast<int>(static_cast<long long>(y) * pan * f.h / full_h));
+    // brightness -> step once per level value, then colour index per picture pixel (0 = transparent)
+    uint8_t step_of[256];
+    for (int l = 0; l < 256; ++l) step_of[l] = static_cast<uint8_t>(std::lround(curve(static_cast<float>(l) / 255.0f) * 15.0f));
+    std::vector<uint8_t> idx(static_cast<size_t>(f.w) * f.h, 0);
+    for (size_t i = 0; i < idx.size(); ++i) {
+        const int st = step_of[f.level[i]];
+        if (st >= 1) idx[i] = static_cast<uint8_t>(1 + (f.hue[i] >> 4) * 15 + (st - 1));
+    }
+    // the palette only changes with the colour settings: build its text once
+    if (!pal_valid || pal_seen != f.pal) {
+        pal_text.clear();
+        for (int hb = 0; hb < 16; ++hb)
+            for (int st = 1; st <= 15; ++st) {
+                const float l = static_cast<float>(st) / 15.0f;
+                const float hot = std::clamp((l - 0.80f) / 0.20f, 0.0f, 1.0f) * 0.40f;
+                const auto& p = f.pal[static_cast<size_t>(hb * 16 + 8)];
+                auto ch = [&](int c) { return static_cast<int>(std::lround(((static_cast<float>(p[static_cast<size_t>(c)]) * (1.0f - hot) + 255.0f * hot) * l) / 255.0f * 100.0f)); };
+                pal_text += '#'; put_int(pal_text, 1 + hb * 15 + st - 1);
+                pal_text += ";2;"; put_int(pal_text, ch(0)); pal_text += ';'; put_int(pal_text, ch(1)); pal_text += ';'; put_int(pal_text, ch(2));
+            }
+        pal_seen = f.pal;
+        pal_valid = true;
+    }
+    if (bits.size() != static_cast<size_t>(256) * W) bits.assign(static_cast<size_t>(256) * W, 0);
+    std::string o;
+    o.reserve(65536);
+    // erase the cells first: pixels left transparent would otherwise show the previous picture through
+    o += "\x1b[0m";
+    for (int r = 0; r < f.rows; ++r) { o += at_cell(f.row + r, f.col + crop); o += "\x1b["; put_int(o, vis_cols); o += 'X'; }
+    o += at_cell(f.row, f.col + crop);
+    o += "\x1bP0;1;0q\""; put_int(o, pan); o += ";1;"; put_int(o, W); o += ';'; put_int(o, H);
+    o += pal_text;
+    std::vector<int> used;
+    used.reserve(256);
+    std::vector<char> seen(256, 0);
     for (int by = 0; by < H; by += 6) {
         const int bh = std::min(6, H - by);
-        std::vector<char> used(256, 0);
-        for (int y = 0; y < bh; ++y)
-            for (int x = 0; x < W; ++x) used[idx[static_cast<size_t>(by + y) * W + x]] = 1;
-        for (int c = 1; c < 256; ++c) {
-            if (!used[static_cast<size_t>(c)]) continue;
-            o += "#" + std::to_string(c);
-            int run = 0; char prev = 0;
-            auto flush = [&]() {
-                if (run <= 0) return;
-                if (run > 3) o += "!" + std::to_string(run) + prev;
-                else o.append(static_cast<size_t>(run), prev);
-                run = 0;
-            };
+        used.clear();
+        for (int y = 0; y < bh; ++y) {
+            const uint8_t* row = idx.data() + static_cast<size_t>(ys[static_cast<size_t>(by + y)]) * f.w;
+            const uint8_t bit = static_cast<uint8_t>(1u << y);
             for (int x = 0; x < W; ++x) {
-                int bits = 0;
-                for (int y = 0; y < bh; ++y) if (idx[static_cast<size_t>(by + y) * W + x] == c) bits |= 1 << y;
-                const char ch = static_cast<char>(63 + bits);
-                if (run > 0 && ch == prev) ++run; else { flush(); prev = ch; run = 1; }
+                const int c = row[xs[static_cast<size_t>(x)]];
+                if (c == 0) continue;
+                if (!seen[static_cast<size_t>(c)]) { seen[static_cast<size_t>(c)] = 1; used.push_back(c); minx[static_cast<size_t>(c)] = x; maxx[static_cast<size_t>(c)] = x; }
+                else { minx[static_cast<size_t>(c)] = std::min(minx[static_cast<size_t>(c)], x); maxx[static_cast<size_t>(c)] = std::max(maxx[static_cast<size_t>(c)], x); }
+                bits[static_cast<size_t>(c) * W + x] |= bit;
             }
-            flush();
-            o += "$";
         }
-        o += "-";
+        for (size_t u = 0; u < used.size(); ++u) {
+            const int c = used[u];
+            uint8_t* b = bits.data() + static_cast<size_t>(c) * W;
+            const int x0 = minx[static_cast<size_t>(c)], x1 = maxx[static_cast<size_t>(c)];
+            o += '#'; put_int(o, c);
+            put_run(o, x0, '?');
+            int run = 0; char prev = 0;
+            for (int x = x0; x <= x1; ++x) {
+                const char ch = static_cast<char>(63 + b[x]);
+                b[x] = 0;
+                if (run > 0 && ch == prev) ++run;
+                else { put_run(o, run, prev); prev = ch; run = 1; }
+            }
+            put_run(o, run, prev);
+            seen[static_cast<size_t>(c)] = 0;
+            if (u + 1 < used.size()) o += '$';
+        }
+        o += '-';
     }
     o += "\x1b\\";
-    cache = o;
     return o;
 }
 
@@ -213,3 +275,36 @@ GfxProto gfx_probe(const std::string& pref_in) {
 }
 
 bool gfx_compressed() { return true; }
+
+// The picture's cells in a text frame: U+E000 (private use, one column wide everywhere) as a placeholder, so overlays and
+// width calculations treat them like any other cell.
+std::string gfx_hole(int n) {
+    std::string o;
+    for (int i = 0; i < n; ++i) o += "\xEE\x80\x80";
+    return o;
+}
+
+void gfx_fill_holes(std::string& s, bool skip) {
+    static const std::string kHole = "\xEE\x80\x80";
+    size_t at = s.find(kHole);
+    if (at == std::string::npos) return;
+    std::string o;
+    o.reserve(s.size());
+    size_t from = 0;
+    while (at != std::string::npos) {
+        o.append(s, from, at - from);
+        int n = 0;
+        while (s.compare(at, kHole.size(), kHole) == 0) { ++n; at += kHole.size(); }
+        if (skip) { o += "\x1b["; o += std::to_string(n); o += 'C'; }   // move over the cells: the picture stays
+        else o.append(static_cast<size_t>(n), ' ');
+        from = at;
+        at = s.find(kHole, from);
+    }
+    o.append(s, from, std::string::npos);
+    s.swap(o);
+}
+
+int gfx_picture_cap(GfxProto proto, int scale) {
+    if (proto == GfxProto::Kitty) return gfx_compressed() ? 60 : 20;
+    return scale > 1 ? 60 : 30;   // Sixel: the encoder is fast; at full resolution the data per picture is what limits
+}

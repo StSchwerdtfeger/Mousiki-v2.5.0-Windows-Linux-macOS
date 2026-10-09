@@ -18,7 +18,11 @@ struct GfxFrame {
     int col = 0, row = 0;           // top-left cell, 0-based
     int cols = 0, rows = 0;         // size in cells
     int crop = 0;                   // cells at the left that an overlay covers and that stay free
-    int w = 0, h = 0;               // size in pixels
+    int w = 0, h = 0;               // size of the picture in pixels (with scale > 1 smaller than the screen area)
+    int scale = 1;                  // the picture has 1/scale of the screen resolution and is enlarged on the way out:
+                                    // Kitty scales it itself (c= / r=), Sixel repeats the pixels (vertically via the pixel
+                                    // aspect ratio where the terminal honours it, i.e. Windows Terminal)
+    int out_cw = 0, out_ch = 0;     // Sixel: screen pixels of one cell (0 = w / cols, h / rows)
     std::vector<uint8_t> level;     // brightness 0..255, w * h
     std::vector<uint8_t> hue;       // colour index 0..255, w * h (see `pal`)
     std::array<std::array<uint8_t, 3>, 256> pal{};   // hue -> colour at full brightness
@@ -34,4 +38,10 @@ void gfx_cell_pixels(const std::string& override_wxh, int& w, int& h);
 std::string gfx_emit(GfxProto proto, const GfxFrame& f);
 std::string gfx_clear(GfxProto proto);
 const char* gfx_name(GfxProto proto);
-bool gfx_compressed();   // Kitty pictures are always zlib-compressed (miniz): cheap enough to send every frame
+bool gfx_compressed();
+// Placeholder cells for the picture in a text frame (n columns) and their replacement before the frame is written:
+// skip = true moves the cursor over them (Sixel: the picture on screen stays), false writes spaces.
+std::string gfx_hole(int n);
+void gfx_fill_holes(std::string& s, bool skip);
+// The most pictures per second sent to the terminal (Kitty 60; Sixel 30 at full resolution, 60 at half / third).
+int gfx_picture_cap(GfxProto proto, int scale);   // Kitty pictures are always zlib-compressed (miniz): cheap enough to send every frame

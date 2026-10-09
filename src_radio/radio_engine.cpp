@@ -1,4 +1,6 @@
 #include "radio_engine.h"
+#include "scope_window.h"
+#include "spectrogram.h"
 #include "loudness_meter.h"
 #include <algorithm>
 #include <atomic>
@@ -252,7 +254,8 @@ std::string ffmpeg_cmd(const Station& st) {
         // rw_timeout: give up on a stalled socket after 15 s instead of blocking forever.
         cmd += "-rw_timeout 15000000 -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -i " + shell_quote(st.url);
     }
-    cmd += " -vn -f f32le -ac 2 -ar " + std::to_string(kRate) + " -";
+    // To 48 kHz with a long, sharp resampling filter (ffmpeg's default one is shorter and softer at the top end).
+    cmd += " -vn -af aresample=" + std::to_string(kRate) + ":filter_size=64:phase_shift=10:cutoff=0.97 -f f32le -ac 2 -ar " + std::to_string(kRate) + " -";
     return cmd;
 }
 
@@ -570,6 +573,8 @@ struct RadioEngine::Impl {
     FftVisualizer fft;
     RadioScope scope;
     std::vector<float> mono;   // scratch for the FFT feed, sized before the device starts
+    std::vector<float> scope_raw;              // scratch: the unprocessed stream for the scopes (oscilloscope music mode)
+    std::atomic<bool> scope_raw_on{false};
 
     static void data_callback(ma_device* dev, void* output, const void*, ma_uint32 frame_count) {
         auto* self = static_cast<Impl*>(dev->pUserData);
@@ -586,6 +591,12 @@ struct RadioEngine::Impl {
             if (got < want) self->primed.store(false); // underrun: output silence, refill to the pre-buffer again
         }
         if (got < want) std::memset(out + got * kChannels, 0, (want - got) * kChannels * sizeof(float));
+        // Oscilloscope music mode: the scopes get the stream as it comes (before mono fold, equalizer, normalization,
+        // volume and the tuning noise).
+        const bool raw_scope = self->scope_raw_on.load(std::memory_order_relaxed) && self->scope_raw.size() >= want * kChannels;
+        if (raw_scope) std::memcpy(self->scope_raw.data(), out, want * kChannels * sizeof(float));
+        muisc::spectro_feed_push(out, want, kRate);   // the spectrogram: the stream as it comes; nothing while none is shown
+        muisc::spectro_window_feed_push(out, want, kRate);   // and the spectrogram window (SHIFT+8); nothing while it is closed
 
         // Mono: fold left and right together (before the loudness measurement, so it measures what is heard).
         if (!self->stereo.load(std::memory_order_relaxed)) {
@@ -696,7 +707,9 @@ struct RadioEngine::Impl {
         }
 
         // Visualizers get exactly what went to the device, like in the music player.
-        self->scope.push_frames(out, want);
+        const float* scope_src = raw_scope ? self->scope_raw.data() : out;
+        self->scope.push_frames(scope_src, want);
+        muisc::scope_feed_push(scope_src, want, kRate);   // the scope window (SHIFT+9); nothing while it is closed
         size_t done = 0;
         while (done < want) {
             const size_t chunk = std::min(want - done, self->mono.size());
@@ -710,6 +723,7 @@ struct RadioEngine::Impl {
 
 RadioEngine::RadioEngine() : impl_(new Impl) {
     impl_->mono.assign(8192, 0.0f);
+    impl_->scope_raw.assign(2 * 16384, 0.0f);
     impl_->feeder = std::thread([d = impl_.get()]() { d->feeder_main(); });
 }
 
@@ -887,7 +901,7 @@ double RadioEngine::jump(double seconds) {
     target = std::clamp(target, oldest, end);
     const double moved = static_cast<double>(target - heard) / kRate;
     // Forward to (almost) the live edge: back to live, playing on from 1.5 s before the edge so there is no gap.
-    if (target >= end - kPrebufferFrames) target = std::max(oldest, end - static_cast<long long>(kPrebufferFrames));
+    if (target >= end - static_cast<long long>(kPrebufferFrames)) target = std::max(oldest, end - static_cast<long long>(kPrebufferFrames));
     d.shifted->store(true);
     d.feed_pos.store(target);
     d.ring->clear(target);
@@ -905,6 +919,8 @@ void RadioEngine::go_live() {
 }
 
 void RadioEngine::set_muted(bool m) { impl_->muted.store(m); }
+void RadioEngine::set_scope_raw(bool on) { impl_->scope_raw_on.store(on, std::memory_order_relaxed); }
+
 void RadioEngine::set_stereo(bool on) {
     if (impl_->stereo.exchange(on) != on) impl_->meter_reset.store(true);   // mono and stereo measure differently
 }

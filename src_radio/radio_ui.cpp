@@ -1,6 +1,8 @@
 #include "radio_ui.h"
+#include "scope_window.h"
 #include "keyboard_layout.h"
 #include <algorithm>
+#include <cstring>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -536,6 +538,7 @@ RadioScope::Params scope_params(const RadioSettings& c, double dt) {
     p.rotate = o.rotate;
     p.mono_phase = o.mono_phase;
     p.glow = o.glow;
+    if (c.osci().music) { p.mono_phase = false; p.fixed_gain = true; }   // oscilloscope music mode: the exact figure
     return p;
 }
 
@@ -548,8 +551,14 @@ bool build_scope_image(const Style& s, const UiModel& m, RadioEngine& engine, in
     // pixels per cell, capped so a big terminal does not mean a huge picture (the terminal scales it up)
     const int cw0 = std::max(4, m.cell_w), ch0 = std::max(8, m.cell_h);
     const int cwq = std::clamp(560 / scope_w, 4, cw0);
-    const int chq = std::max(8, static_cast<int>(std::lround(static_cast<double>(cwq) * ch0 / cw0)));
-    g.cols = scope_w; g.rows = kPanelH; g.w = scope_w * cwq; g.h = kPanelH * chq;
+    // Image resolution (SHIFT+o): render 1/scale of it; Kitty scales the picture up itself, Sixel repeats its pixels up to
+    // the real cell size (out_cw x out_ch). Less to render, encode and send per frame.
+    g.scale = std::clamp(s.c.image_scale, 1, 3);
+    g.out_cw = cw0; g.out_ch = ch0;
+    // 1/scale of the real cell pixels, but never more than the width cap above (cwq)
+    const int cws = std::max(2, std::min(cwq, cw0 / g.scale));
+    const int chs = std::max(4, static_cast<int>(std::lround(static_cast<double>(cws) * ch0 / cw0)));
+    g.cols = scope_w; g.rows = kPanelH; g.w = scope_w * cws; g.h = kPanelH * chs;
     engine.scope().render_image(g.w, g.h, scope_params(s.c, m.dt), g.level, g.hue);
     const int pal = s.c.osci().palette;
     if (pal == 0) {   // OSCI gradient over the picture: the colour follows the horizontal position, like the braille scope
@@ -570,7 +579,10 @@ bool build_scope_image(const Style& s, const UiModel& m, RadioEngine& engine, in
 std::vector<std::string> build_scope(const Style& s, const UiModel& m, RadioEngine& engine, bool idle, int scope_w) {
     std::vector<std::string> rows(kPanelH, spaces(scope_w));
     if (idle) return rows; // nothing playing: no phosphor dot hovering in the corner
-    if (build_scope_image(s, m, engine, scope_w)) return rows;
+    if (build_scope_image(s, m, engine, scope_w)) {   // placeholder cells: the main loop writes them as spaces or skips them
+        for (auto& r : rows) r = gfx_hole(scope_w);
+        return rows;
+    }
     auto cells = engine.scope().render(scope_w, kPanelH, scope_params(s.c, m.dt));
     const int pal = s.c.osci().palette;
     for (int i = 0; i < kPanelH && i < static_cast<int>(cells.size()); ++i) {
@@ -891,7 +903,7 @@ std::vector<std::string> build_lists(const Style& s, const UiModel& m, const Rad
         std::string tail = stn.codec_hint;
         if (stn.bitrate_hint > 0) tail = std::to_string(stn.bitrate_hint) + "k " + stn.codec_hint;
         const std::string sep = s.c.list_separator;
-        const bool hovered = (vi == cursor) && !m.search_focus;
+        const bool hovered = vi == cursor;   // also while searching: Up/Down move it there and ENTER tunes it
         const std::string name_shown = hovered ? marquee_or_truncate(m.marquee_row, m.marquee_since, m.t_sec, stn.name, name_w, idx)
                                                : pad_right(truncate_str(stn.name, name_w), name_w);
         // Number left-aligned and padded on the right, like the player ("5  |"), no leading blanks.
@@ -1623,6 +1635,7 @@ std::vector<std::string> build_browse(const Style& s, const UiModel& m, const Ra
 // "SHIFT+t" (the binding itself stays "T"); labels such as "SHIFT+t" / "CTRL+SHIFT+u" get the lower-case letter too.
 std::string pretty_key(const std::string& k) {
     if (k == "@SWITCHKEY") return muisc::mode_switch_key_label();   // named for this keyboard (keyboard_layout.h)
+    if (k == "(" || k == ")") return muisc::symbol_key_label(k);   // SHIFT+8 / SHIFT+9 on a German keyboard
     if (k.size() == 1 && k[0] >= 'A' && k[0] <= 'Z') return std::string("SHIFT+") + static_cast<char>(k[0] + 32);
     std::string o = k;
     size_t p = 0;
@@ -1682,8 +1695,12 @@ const CheatRow kCheatRows[] = {
     {nullptr, "</>/UP/DOWN", "Equalizer: select band (LEFT / RIGHT) / gain +1 / -1 dB"},
     {nullptr, ",/./TAB/0/R", "Equalizer: previous / next preset / zero the band / reset to Flat (SPACE on/off)"},
     {nullptr, "S/DEL/X", "Equalizer: save the curve as a custom preset (ENTER saves, ESC cancels) / delete the selected one (press twice)"},
-    {nullptr, ".", "Switch the scope block between the oscilloscope and the sphere, like . in the player (rebindable)"},
-    {nullptr, "SHIFT+o", "Oscilloscope overlay (display, style, frame rate, image protocol, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
+    {nullptr, ".", "Cycle the scope block: oscilloscope / sphere / spectrogram, like . in the player (rebindable; what is off on the ON/OFF tab is skipped)"},
+    {nullptr, "SHIFT+i", "Spectrogram options overlay (style, motion, scale, frequencies, gain, range, window, colors, channels, time span; R = Audacity's defaults)"},
+    {nullptr, "SHIFT+u", "Spectrogram full screen with frequency labels and time ruler (toggle; ESC closes)"},
+    {nullptr, "SHIFT+o", "Oscilloscope overlay (osci music mode, style, frame rate up to 165 -- all per style --, image protocol, image resolution, afterglow, dot threshold, tail, Line/Vec. Interpol., Z-Axis, Z depth / source, trace length, rotation, mono phase portrait; R resets)"},
+    {nullptr, ")", "Scope window: the oscilloscope in its own window, drawn by the graphics card (toggle; needs SDL2). In it: F / F11 / double-click fullscreen, T always on top, ESC closes"},
+    {nullptr, "(", "Spectrogram window: the spectrogram in its own window, scrolling smoothly at the monitor's refresh rate (toggle; needs SDL2; same keys inside it)"},
     {nullptr, "SHIFT+z", "Sleep timer: 15 / 30 / 60 / 90 / 120 min, stops the stream (optionally with a fade-out of the volume)"},
     {nullptr, "y", "Record: opens the RECORD overlay (from now on = the moment y was pressed, the last 1 / 5 / 10 / 15 / 30 min, everything buffered); y again stops and saves the MP3"},
     {nullptr, "UP/DOWN/ENTER", "Record overlay: choose the start / start recording (y does the same; ESC cancels)"},
@@ -1892,7 +1909,7 @@ std::vector<std::string> build_stations_overlay(const Style& s, const UiModel& m
             const Station& stn = stations[static_cast<size_t>(idx)];
             std::string tail = stn.codec_hint;
             if (stn.bitrate_hint > 0) tail = std::to_string(stn.bitrate_hint) + "k " + stn.codec_hint;
-            const bool hovered = vi == cursor && !m.search_focus;
+            const bool hovered = vi == cursor;   // also while searching (Up/Down move it, ENTER tunes it)
             const std::string name_shown = hovered ? marquee_or_truncate(so.marquee_row, so.marquee_since, m.t_sec, stn.name, name_w, idx)
                                                    : pad_right(truncate_str(stn.name, name_w), name_w);
             int number = idx + 1;
@@ -2383,6 +2400,7 @@ constexpr int kNormOverlayW = 54;
 constexpr int kSleepOverlayW = 52;
 constexpr int kRecordOverlayW = 56;
 constexpr int kEqOverlayW = 58;
+constexpr int kSpectroOverlayW = 52;
 constexpr int kSleepMinutes[5] = {15, 30, 60, 90, 120};
 
 std::string fmt_loudness(double v) {
@@ -2397,13 +2415,29 @@ std::vector<std::string> build_overlay(const Style& s, const UiModel& m, const R
     const bool sleep = m.overlay == 3;
     const bool eqo = m.overlay == 4;
     const bool rec = m.overlay == 5;
-    const int W = rec ? kRecordOverlayW : eqo ? kEqOverlayW : sleep ? kSleepOverlayW : osci ? kOsciOverlayW : kNormOverlayW;
+    const bool spo = m.overlay == 6;
+    const int W = spo ? kSpectroOverlayW : rec ? kRecordOverlayW : eqo ? kEqOverlayW : sleep ? kSleepOverlayW : osci ? kOsciOverlayW : kNormOverlayW;
     const int inner = W - 4;
     auto row = [&](const std::string& plain, bool hi, const std::string& ansi = "") {
         const std::string body = pad_right(truncate_str(plain, inner), inner);
         return box_line(s, (hi ? "\x1b[7m" : ansi) + body + kReset, s.border);
     };
     std::vector<std::string> lines;
+    if (spo) {
+        // Spectrogram options (SHIFT+i): the same rows as the player's overlay
+        lines.push_back(box_top(s, W, "Spectrogram", s.border));
+        for (int r = kSrStyle; r < kSpectroRowCount; ++r) {
+            const bool on = r == m.overlay_row;
+            std::string val = spectro_row_value(c.spectro, r);
+            if (r == kSrStyle && c.spectro.style == 1 && m.gfx_proto == GfxProto::None) val = "image (no Sixel/Kitty here)";
+            lines.push_back(row(std::string(on ? "> " : "  ") + pad_right(spectro_row_label(r), 22) + pad_left(val, inner - 24), on));
+        }
+        lines.push_back(row("", false));
+        lines.push_back(row("[UP/DOWN] select  [LEFT/RIGHT] change", false));
+        lines.push_back(row("[R] Audacity defaults  [SHIFT+u] full screen", false));
+        lines.push_back(box_bottom(s, W, "[SHIFT+i / ESC] close", s.border_bottom));
+        return lines;
+    }
     if (rec) {
         // Record (y): from the moment the overlay opened, or that much earlier out of the timeshift buffer.
         auto clock = [](double sec) {
@@ -2566,10 +2600,80 @@ int preset_slot_of(const std::vector<int>& presets, int station_index) {
     return -1;
 }
 
+// The spectrogram's "gradient" colours: the two ends of the OSCI gradient (Settings -> COLORS), like the oscilloscope's.
+void spectro_gradient_from(const Style& s) {
+    int r0 = 255, g0 = 255, b0 = 255, r1 = 255, g1 = 255, b1 = 255;
+    palette_rgb(s, 0, 0.0f, r0, g0, b0);
+    palette_rgb(s, 0, 1.0f, r1, g1, b1);
+    auto c8 = [](int v) { return static_cast<uint8_t>(std::clamp(v, 0, 255)); };
+    spectro_set_gradient({c8(r0), c8(g0), c8(b0)}, {c8(r1), c8(g1), c8(b1)});
+}
+
+// SHIFT+u: the spectrogram over the whole screen: station and song as the title, frequency labels on the left (like
+// Audacity's ruler), a time ruler on top; the options overlay (SHIFT+i) can sit on top of it.
+std::vector<std::string> build_spectro_full(const Style& s, const UiModel& m, const RadioStatus& st, int W, int rows_total) {
+    const RadioSettings& c = s.c;
+    const SpectroSettings& sp = c.spectro;
+    SpectroAnalyzer& a = spectro();
+    m.spectro_used = true;
+    spectro_gradient_from(s);
+    a.update(sp);
+    const int label_w = 6;
+    const int cols = std::max(4, W - 2 - label_w - 1);
+    const int rows = std::max(2, rows_total - 3);
+    const bool image = sp.style == 1 && m.gfx_proto != GfxProto::None;
+    const int unit = image ? std::max(1, m.cell_h) : 4;
+    std::vector<std::string> lab(static_cast<size_t>(rows));
+    for (const auto& l : spectro_axis(sp, a.rate(), rows * unit, unit))
+        if (l.first >= 0 && l.first < rows) lab[static_cast<size_t>(l.first)] = l.second;
+    std::string title = "SPECTROGRAM";
+    const std::string name = st.tuned_name.empty() ? st.info.station : st.tuned_name;
+    if (!name.empty()) title += " - " + name;
+    if (!st.info.title.empty()) title += ": " + (st.info.artist.empty() ? st.info.title : st.info.artist + " - " + st.info.title);
+    const std::string bar = s.border + c.box_vertical + kReset;
+    std::vector<std::string> out;
+    out.push_back(box_top(s, W, truncate_str(title, W - 6), s.border));
+    {
+        std::string ruler(static_cast<size_t>(cols), ' ');
+        const int step = sp.span <= 5 ? 1 : sp.span <= 10 ? 2 : sp.span <= 30 ? 5 : 10;
+        for (int t = 0; t <= sp.span; t += step) {
+            const int x = static_cast<int>(static_cast<long long>(t) * (cols - 1) / std::max(1, sp.span));
+            const std::string txt = sp.motion == 1 ? (t == sp.span ? "now" : "-" + std::to_string(sp.span - t) + "s") : std::to_string(t) + "s";
+            const int x0 = std::clamp(x - (t == 0 ? 0 : t == sp.span ? static_cast<int>(txt.size()) - 1 : static_cast<int>(txt.size()) / 2), 0, std::max(0, cols - static_cast<int>(txt.size())));
+            for (size_t k = 0; k < txt.size() && x0 + static_cast<int>(k) < cols; ++k) ruler[static_cast<size_t>(x0) + k] = txt[k];
+        }
+        out.push_back(bar + s.legend + spaces(label_w + 1) + ruler + kReset + bar);
+    }
+    std::vector<std::string> body;
+    if (image) { m.spectro_area[0] = 2; m.spectro_area[1] = 1 + label_w + 1; m.spectro_area[2] = cols; m.spectro_area[3] = rows; }
+    else body = a.braille(sp, cols, rows);
+    for (int r = 0; r < rows; ++r) {
+        const std::string l = sp.labels ? lab[static_cast<size_t>(r)] : std::string();
+        std::string line = bar + s.legend + spaces(std::max(0, label_w - display_width(l))) + l + kReset + " ";
+        line += image ? gfx_hole(cols) : (r < static_cast<int>(body.size()) ? body[static_cast<size_t>(r)] : spaces(cols));
+        out.push_back(line + bar);
+    }
+    out.push_back(box_bottom(s, W, "[SHIFT+i] options  [SHIFT+u / ESC] close  " + spectro_row_value(sp, kSrScale) + " " +
+                                   std::to_string(sp.min_freq) + "-" + std::to_string(std::min(sp.max_freq, a.rate() / 2)) + " Hz", s.border_bottom));
+    if (m.overlay == 6) {
+        const auto panel = build_overlay(s, m, st);
+        const int ph = static_cast<int>(panel.size());
+        const int x = std::max(0, (W - kSpectroOverlayW) / 2);
+        const int y = std::clamp((static_cast<int>(out.size()) - ph) / 2, 0, std::max(0, static_cast<int>(out.size()) - ph));
+        for (int i = 0; i < ph && y + i < static_cast<int>(out.size()); ++i)
+            out[static_cast<size_t>(y + i)] = splice_line(out[static_cast<size_t>(y + i)], x, panel[static_cast<size_t>(i)], kSpectroOverlayW);
+        m.spectro_skip[0] = y; m.spectro_skip[1] = x; m.spectro_skip[2] = ph; m.spectro_skip[3] = kSpectroOverlayW;
+    }
+    return out;
+}
+
 std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus& st, RadioEngine& engine, const RadioSettings& cfg) {
     Style s(cfg);
     std::vector<std::string> out;
     m.gfx.active = false;   // set again below when the scope is drawn as an image
+    m.spectro_used = false;
+    m.spectro_area[0] = -1;
+    m.spectro_skip[2] = m.spectro_skip[3] = 0;
     if (m.cheat_open) return build_cheatsheet(s, m, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
     if (m.hmenu.open) return build_history_menu(s, m, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
     if (m.settings.open) return build_settings(cfg, m.settings, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
@@ -2577,6 +2681,7 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     if (m.browse.open) return build_browse(s, m, st, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
     if (m.menu.open) return build_menu(s, m, st, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
     if (m.stov.open) return build_stations_overlay(s, m, st, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
+    if (m.spectro_full) return build_spectro_full(s, m, st, std::clamp(m.cols, kUiCols, kMaxCols), std::max(m.rows, kUiRows));
 
     // Sizing: width follows the terminal (clamped), the frame is as tall as the terminal, and only
     // the list boxes take the rows that are left over.
@@ -2619,7 +2724,16 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     if (show_sign) left = build_left(s, m, st);
     meta = build_meta(s, st, cfg.element_visualizer ? &bars : nullptr);
     const bool off_air = st.state == StreamState::Idle || st.state == StreamState::Failed;
-    if (show_scope) scope = off_air ? build_satellite(s, m.t_sec, scope_w)
+    bool spectro_img = false;
+    if (show_scope && !off_air && cfg.scope_mode == 3) {   // the spectrogram (like Audacity's), braille or a picture
+        m.spectro_used = true;
+        spectro_gradient_from(s);
+        spectro().update(cfg.spectro);
+        if (cfg.spectro.style == 1 && m.gfx_proto != GfxProto::None) {
+            spectro_img = true;
+            scope.assign(kPanelH, gfx_hole(scope_w));
+        } else scope = spectro().braille(cfg.spectro, scope_w, kPanelH);
+    } else if (show_scope) scope = off_air ? build_satellite(s, m.t_sec, scope_w)
                           : cfg.scope_mode == 1 ? build_sphere(s, bars, m.dt, scope_w)
                                                 : build_scope(s, m, engine, false, scope_w);
     if (show_scope && !m.scope_notice.empty() && !scope.empty()) {   // timeshift jumps: a note at the bottom of the scope block
@@ -2650,18 +2764,25 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     for (auto& l : build_lists(s, m, st, W, list_rows)) out.push_back(l);
     // The image sits on the scope block: its cell position (row 1 = under the top border) ...
     int scope_x = 0;
+    if (spectro_img) {
+        m.spectro_area[0] = 1;
+        m.spectro_area[1] = 1 + (show_sign ? kLeftW + ex_first + kSepW : 0) + kMetaW + (show_sign ? ex_second : 0) + (show_sign ? 0 : std::max(0, (rest_w - scope_w) / 2));
+        m.spectro_area[2] = scope_w;
+        m.spectro_area[3] = kPanelH - (m.scope_notice.empty() ? 0 : 1);   // the timeshift note keeps its row
+    }
     if (m.gfx.active && show_scope) {
         scope_x = 1 + (show_sign ? kLeftW + ex_first + kSepW : 0) + kMetaW + (show_sign ? ex_second : 0) + (show_sign ? 0 : std::max(0, (rest_w - scope_w) / 2));
         m.gfx.col = scope_x; m.gfx.row = 1; m.gfx.crop = 0;
     }
     if (m.overlay != 0) {   // SHIFT+o / SHIFT+v overlay, centred over the finished screen
         const auto panel = build_overlay(s, m, st);
-        const int pw = m.overlay == 5 ? kRecordOverlayW : m.overlay == 4 ? kEqOverlayW : m.overlay == 3 ? kSleepOverlayW : m.overlay == 1 ? kOsciOverlayW : kNormOverlayW;
+        const int pw = m.overlay == 6 ? kSpectroOverlayW : m.overlay == 5 ? kRecordOverlayW : m.overlay == 4 ? kEqOverlayW : m.overlay == 3 ? kSleepOverlayW : m.overlay == 1 ? kOsciOverlayW : kNormOverlayW;
         const int ph = static_cast<int>(panel.size());
         const int x = std::max(0, (W - pw) / 2);
         const int y = std::clamp((rows - ph) / 2 - 2, 0, std::max(0, rows - ph));
         for (int i = 0; i < ph; ++i)
             out[static_cast<size_t>(y + i)] = splice_line(out[static_cast<size_t>(y + i)], x, panel[static_cast<size_t>(i)], pw);
+        m.spectro_skip[0] = y; m.spectro_skip[1] = x; m.spectro_skip[2] = ph; m.spectro_skip[3] = pw;
         // ... and the columns an overlay covers stay free (an image is not covered by text drawn over it)
         if (m.gfx.active && y < 1 + kPanelH && y + ph > 1 && x < scope_x + scope_w && x + pw > scope_x)
             m.gfx.crop = std::clamp(x + pw - scope_x, 0, scope_w);
@@ -2669,6 +2790,44 @@ std::vector<std::string> render_radio_frame(const UiModel& m, const RadioStatus&
     if (m.gfx.active && m.gfx.crop != m.gfx_last_crop) { m.gfx.fresh = true; }
     m.gfx_last_crop = m.gfx.active ? m.gfx.crop : -1;
     return out;
+}
+
+// The scope window (SHIFT+9): the image style's values and colours, and "station: artist - title" as its title.
+void fill_scope_window_config(const RadioSettings& cfg, const RadioStatus& st, ScopeWinConfig& c) {
+    const Style s(cfg);
+    const OsciSet& o = cfg.osci_set[1];
+    c.decay = o.decay;
+    c.glow = o.glow;
+    c.z_depth = o.z_depth;
+    c.z = o.z ? 1 : 0;
+    c.z_source = static_cast<uint8_t>(o.z_source == 1 ? 1 : 0);
+    c.rotate = o.rotate ? 1 : 0;
+    c.mono_phase = o.mono_phase ? 1 : 0;
+    c.interp = o.interp ? 1 : 0;
+    c.color_by_x = o.palette == 0 ? 1 : 0;
+    c.music = cfg.osci_set[1].music ? 1 : 0;
+    for (int h = 0; h < 256; ++h) {
+        int r = 255, g = 255, b = 255;
+        palette_rgb(s, o.palette, static_cast<float>(h) / 255.0f, r, g, b);
+        c.pal[h][0] = static_cast<uint8_t>(std::clamp(r, 0, 255));
+        c.pal[h][1] = static_cast<uint8_t>(std::clamp(g, 0, 255));
+        c.pal[h][2] = static_cast<uint8_t>(std::clamp(b, 0, 255));
+    }
+    std::string title = st.tuned_name.empty() ? st.info.station : st.tuned_name;
+    const std::string song = st.info.artist.empty() ? st.info.title : st.info.artist + " - " + st.info.title;
+    if (!song.empty() && song != " - ") title += (title.empty() ? "" : ": ") + song;
+    std::snprintf(c.title, sizeof c.title, "%s", title.c_str());
+}
+
+// The spectrogram window (SHIFT+8): the SHIFT+i options, the colours of the scheme in use, the same title.
+void fill_spectro_window_config(const RadioSettings& cfg, const RadioStatus& st, SpectroWinConfig& c) {
+    spectro_win_pack(cfg.spectro, c);
+    spectro_gradient_from(Style(cfg));
+    const auto& pal = spectro_palette(cfg.spectro.scheme);
+    for (int h = 0; h < 256; ++h) for (int k = 0; k < 3; ++k) c.pal[h][k] = pal[static_cast<size_t>(h)][static_cast<size_t>(k)];
+    ScopeWinConfig sc;   // the title as the scope window has it
+    fill_scope_window_config(cfg, st, sc);
+    std::memcpy(c.title, sc.title, sizeof c.title);
 }
 
 } // namespace muisc::radio

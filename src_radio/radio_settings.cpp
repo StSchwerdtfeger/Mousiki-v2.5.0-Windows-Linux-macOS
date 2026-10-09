@@ -45,6 +45,8 @@ const OnOffRowSpec kOnOffRows[] = {
     {"Tuning noise",     &RadioSettings::tune_noise,      nullptr},
     {"Osci style",       nullptr,                         &RadioSettings::osci_style},
     {"Timeshift buffer", nullptr,                         &RadioSettings::timeshift_idx},
+    {"Use oscilloscope", &RadioSettings::use_osci,        nullptr},   // false: not in the "." cycle (the window still works)
+    {"Use spectrogram",  &RadioSettings::use_spectro,     nullptr},
 };
 const int kOnOffRowCount = static_cast<int>(sizeof(kOnOffRows) / sizeof(kOnOffRows[0]));
 
@@ -55,7 +57,7 @@ std::string on_off_value(const RadioSettings& s, int row) {
     const int v = s.*(r.choice);
     if (r.choice == &RadioSettings::osci_style) return v == 1 ? "image" : "braille";
     if (r.choice == &RadioSettings::timeshift_idx) return std::to_string(timeshift_minutes(s)) + " min";
-    return v == 1 ? "sphere" : v == 2 ? "off" : "osci";
+    return v == 1 ? "sphere" : v == 2 ? "off" : v == 3 ? "spectro" : "osci";
 }
 
 void on_off_change(RadioSettings& s, int row, int dir) {
@@ -66,7 +68,7 @@ void on_off_change(RadioSettings& s, int row, int dir) {
         b = dir == 0 ? !b : dir > 0;
     } else {
         int& v = s.*(r.choice);
-        const int n = r.choice == &RadioSettings::osci_style ? 2 : r.choice == &RadioSettings::timeshift_idx ? 5 : 3;
+        const int n = r.choice == &RadioSettings::osci_style ? 2 : r.choice == &RadioSettings::timeshift_idx ? 5 : 4;
         v = dir == 0 ? (v + 1) % n : (v + (dir > 0 ? 1 : n - 1)) % n;
     }
 }
@@ -74,7 +76,7 @@ void on_off_change(RadioSettings& s, int row, int dir) {
 const char* const kOsciPaletteNames[kOsciPaletteCount] = {"gradient", "settings", "temperature", "aurora", "magma", "ice", "neon", "spectrum"};
 
 namespace {
-const int kFpsSteps[4] = {30, 45, 60, 90};
+const int kFpsSteps[6] = {30, 45, 60, 90, 120, 165};
 const char* const kCellSteps[7] = {"", "8x16", "9x18", "10x20", "12x24", "14x28", "16x32"};
 const char* const kProtoSteps[4] = {"auto", "kitty", "sixel", "off"};
 template <class T, size_t N> int index_of(const T (&arr)[N], const std::string& v, int def) {
@@ -84,9 +86,19 @@ template <class T, size_t N> int index_of(const T (&arr)[N], const std::string& 
 int step_in(int idx, int n, int dir) { return std::clamp(idx + (dir > 0 ? 1 : -1), 0, n - 1); }
 }
 
+const char* osci_res_name(int scale) { return scale >= 3 ? "third" : scale == 2 ? "half" : "full"; }
+int osci_res_parse(const std::string& v, int def) {
+    std::string l = v;
+    for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (l == "full" || l == "1") return 1;
+    if (l == "half" || l == "2") return 2;
+    if (l == "third" || l == "3") return 3;
+    return def;
+}
+
 std::vector<int> osci_visible_rows(const RadioSettings& s) {
-    std::vector<int> r = {kOrDisplay, kOrStyle, kOrFps};
-    if (s.osci_style == 1) { r.push_back(kOrProtocol); }
+    std::vector<int> r = {kOrMusic, kOrStyle, kOrFps};   // no "Display" row: what is shown is the "." key's job
+    if (s.osci_style == 1) { r.push_back(kOrProtocol); r.push_back(kOrRes); }
     r.push_back(kOrDecay);
     if (s.osci_style != 1) r.push_back(kOrDot);
     r.push_back(kOrTail);
@@ -98,7 +110,7 @@ std::vector<int> osci_visible_rows(const RadioSettings& s) {
 std::string osci_row_label(int row) {
     static const char* const L[kOsciRowCount] = {"Decay", "Dot threshold", "Tail", "Line/Vec. Interpol.", "Z-Axis (XYZ Mode)",
         "Z Depth", "Z Source", "Trace Length", "Rotate 45 deg (M/S)", "Mono Phase Portrait", "Color", "Glow",
-        "Osci style", "Osci cell pixels", "Image protocol", "Frame rate", "Display"};
+        "Osci style", "Osci cell pixels", "Image protocol", "Frame rate", "Display", "Image resolution", "Osci music mode"};
     return row >= 0 && row < kOsciRowCount ? L[row] : "";
 }
 std::string osci_row_value(const RadioSettings& s, int row) {
@@ -116,14 +128,16 @@ std::string osci_row_value(const RadioSettings& s, int row) {
         case kOrZSource: return o.z_source == 1 ? "level" : "speed";
         case kOrTrace: return std::to_string(o.trace);
         case kOrRotate: return on(o.rotate);
-        case kOrMono: return on(o.mono_phase);
+        case kOrMono: return o.music ? std::string("off (music mode)") : on(o.mono_phase);
         case kOrPalette: return kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)];
         case kOrGlow: return f2(o.glow);
         case kOrStyle: return s.osci_style == 1 ? "image" : "braille";
         case kOrCells: return s.cell_pixels.empty() ? "auto" : s.cell_pixels;
         case kOrProtocol: return s.gfx_protocol;
-        case kOrFps: return std::to_string(s.frame_rate) + " fps";
-        case kOrDisplay: return s.scope_mode == 1 ? "sphere" : "osci";
+        case kOrFps: return std::to_string(o.frame_rate) + " fps";
+        case kOrRes: return osci_res_name(s.image_scale);
+        case kOrMusic: return on(o.music);
+        case kOrDisplay: return s.scope_mode == 1 ? "sphere" : s.scope_mode == 3 ? "spectro" : "osci";
     }
     return "";
 }
@@ -146,17 +160,36 @@ void osci_adjust(RadioSettings& s, int row, int dir) {
         case kOrStyle: s.osci_style = dir > 0 ? 1 : 0; break;
         case kOrCells: s.cell_pixels = kCellSteps[step_in(index_of(kCellSteps, s.cell_pixels, 0), 7, dir)]; break;
         case kOrProtocol: s.gfx_protocol = kProtoSteps[step_in(index_of(kProtoSteps, s.gfx_protocol, 0), 4, dir)]; break;
+        case kOrMusic: s.osci().music = dir > 0; break;
+        case kOrRes: s.image_scale = std::clamp(s.image_scale + (dir > 0 ? -1 : 1), 1, 3); break;   // right = sharper
         case kOrFps: {
             int i = 0;
-            for (int k = 0; k < 4; ++k) if (kFpsSteps[k] == s.frame_rate) i = k;
-            s.frame_rate = kFpsSteps[step_in(i, 4, dir)];
+            for (int k = 0; k < 6; ++k) if (kFpsSteps[k] == s.osci().frame_rate) i = k;
+            s.osci().frame_rate = kFpsSteps[step_in(i, 6, dir)];
             break;
         }
-        case kOrDisplay: s.scope_mode = dir > 0 ? 1 : 0; break;
+        case kOrDisplay: {   // osci -> sphere -> spectro (off only on the ON/OFF tab; switched-off ones are skipped)
+            static const int order[3] = {0, 1, 3};
+            int i = s.scope_mode == 1 ? 1 : s.scope_mode == 3 ? 2 : 0;
+            for (int k = 0; k < 3; ++k) {
+                i = (i + (dir > 0 ? 1 : 2)) % 3;
+                if ((order[i] == 0 && !s.use_osci) || (order[i] == 3 && !s.use_spectro)) continue;
+                break;
+            }
+            s.scope_mode = order[i];
+            break;
+        }
     }
 }
-void osci_reset(RadioSettings& s) {   // the parameters of the style in use; the shared rows (style, protocol, cells, fps, display) stay
+void radio_enforce_visuals(RadioSettings& s) {
+    if (s.scope_mode == 0 && !s.use_osci) s.scope_mode = 1;      // the sphere instead
+    if (s.scope_mode == 3 && !s.use_spectro) s.scope_mode = 1;
+}
+
+void osci_reset(RadioSettings& s) {   // the parameters of the style in use; the shared rows (style, protocol, cells) and its fps stay
+    const int fps = s.osci().frame_rate;
     s.osci() = OsciSet{};
+    s.osci().frame_rate = fps;
     if (s.osci_style == 1) s.osci().glow = 0.60f;
 }
 void norm_adjust(RadioSettings& s, int row, int dir) {
@@ -419,6 +452,10 @@ const KeyAction kKeyActions[] = {
     {nullptr, "History", "Open History", "h"},
     {nullptr, "Stations", "Big Stations Overlay", "L"},
     {nullptr, "OsciMenu", "Oscilloscope Overlay", "O"},
+    {nullptr, "ScopeWindow", "Scope Window", ")"},            // SHIFT+9 on a German keyboard (was SHIFT+w)
+    {nullptr, "SpectroWindow", "Spectrogram Window", "("},    // SHIFT+8 on a German keyboard
+    {nullptr, "SpectroMenu", "Spectrogram Options", "I"},
+    {nullptr, "SpectroFull", "Spectrogram Full Screen", "U"},
     {nullptr, "NormMenu", "Normalization Overlay", "V"},
     {nullptr, "EqMenu", "Equalizer Overlay", "E"},
     {nullptr, "ScopeToggle", "Switch Osci / Sphere", "."},   // "." like the player's lyrics-area cycle (was "o" up to v3.0.0)
@@ -599,13 +636,17 @@ RadioSettings load_radio_settings(std::string* source_out) {
             // Configs written up to v3.0.0 saved every key, so the old default "o" of the scope switch is
             // stored there as if it were a choice -- treat it as the old default and use the new one (".").
             if (std::string(kKeyActions[i].id) == "ScopeToggle" && val == "o") continue;
+            if (std::string(kKeyActions[i].id) == "ScopeWindow" && val == "W") continue;   // the old default (now SHIFT+9)
             if (key_code(val) != 0 && val != kKeyActions[i].def) s.keys[kKeyActions[i].id] = val;
         }
     }
     if (auto v = get("OnAirAscii")) s.on_air_ascii = as_bool(*v, s.on_air_ascii);
+    if (auto v = get("UseOscilloscope")) s.use_osci = as_bool(*v, s.use_osci);
+    if (auto v = get("UseSpectrogram")) s.use_spectro = as_bool(*v, s.use_spectro);
     if (auto v = get("PulseWave")) s.pulse_wave = as_bool(*v, s.pulse_wave);
     if (auto v = get("DummyButtons")) s.dummy_buttons = as_bool(*v, s.dummy_buttons);
-    if (auto v = get("OsciSphere")) { const std::string l = lower(*v); s.scope_mode = l == "sphere" ? 1 : l == "off" ? 2 : 0; }
+    if (auto v = get("OsciSphere")) { const std::string l = lower(*v); s.scope_mode = l == "sphere" ? 1 : l == "off" ? 2 : (l == "spectro" || l == "spectrogram") ? 3 : 0; }
+    for (const auto& [k, v] : kv) spectro_config_key(s.spectro, k, v);
     if (auto v = get("TuneNoise")) s.tune_noise = as_bool(*v, s.tune_noise);
     if (auto v = get("TimeshiftMinutes")) {
         const int m = std::atoi(v->c_str());
@@ -652,6 +693,10 @@ RadioSettings load_radio_settings(std::string* source_out) {
     if (auto v = get("VisualizerFluidity")) s.visualizer_fluidity = as_int(*v, s.visualizer_fluidity, 1, 10);
     if (auto v = get("VisualizerDegradationSpeed")) s.visualizer_degradation_speed = as_int(*v, s.visualizer_degradation_speed, 1, 10);
     if (auto v = get("VisualizerViscosity")) s.visualizer_viscosity = as_int(*v, s.visualizer_viscosity, 0, 10);
+    // Up to v3.1 one frame rate and one music mode for both styles: they become the starting value of both.
+    auto fps_snap = [](int fr) { return fr >= 143 ? 165 : fr >= 105 ? 120 : fr >= 75 ? 90 : fr >= 52 ? 60 : fr >= 38 ? 45 : 30; };
+    if (auto v = get("FrameRate")) s.osci_set[0].frame_rate = s.osci_set[1].frame_rate = fps_snap(as_int(*v, 30, 30, 165));
+    if (auto v = get("OsciMusicMode")) s.osci_set[0].music = s.osci_set[1].music = as_bool(*v, false);
     // The scope's parameters, once per style: braille = Osci<name>, image = OsciImage<name>.
     for (int st = 0; st < 2; ++st) {
         const std::string P = st == 0 ? "Osci" : "OsciImage";
@@ -668,6 +713,8 @@ RadioSettings load_radio_settings(std::string* source_out) {
         if (auto v = get(key("Rotate").c_str())) o.rotate = as_bool(*v, o.rotate);
         if (auto v = get(key("MonoPhase").c_str())) o.mono_phase = as_bool(*v, o.mono_phase);
         if (auto v = get(key("Glow").c_str())) o.glow = as_float(*v, o.glow, 0.0f, 1.0f);
+        if (auto v = get(key("FrameRate").c_str())) o.frame_rate = fps_snap(as_int(*v, o.frame_rate, 30, 165));
+        if (st == 1) if (auto v = get(key("MusicMode").c_str())) o.music = as_bool(*v, o.music);   // braille: OsciMusicMode above
         if (auto v = get(key("Palette").c_str())) {
             const std::string l = lower(*v);
             for (int i = 0; i < kOsciPaletteCount; ++i) if (l == kOsciPaletteNames[i]) o.palette = i;
@@ -677,7 +724,7 @@ RadioSettings load_radio_settings(std::string* source_out) {
     if (auto v = get("OsciBraille")) s.osci_style = as_bool(*v, true) ? 0 : 1;   // the old name: false meant "not braille"
     if (auto v = get("OsciStyle")) s.osci_style = lower(*v) == "image" ? 1 : 0;
     if (auto v = get("OsciImageProtocol")) s.gfx_protocol = lower(*v);
-    if (auto v = get("FrameRate")) { const int fr = as_int(*v, s.frame_rate, 30, 90); s.frame_rate = fr >= 75 ? 90 : fr >= 52 ? 60 : fr >= 38 ? 45 : 30; }
+    if (auto v = get("OsciImageResolution")) s.image_scale = osci_res_parse(*v, s.image_scale);
     auto glyph = [&](const char* key, std::string& field) { if (auto v = get(key)) if (!v->empty()) field = *v; };
     glyph("BoxUpperLeft", s.box_upper_left);   glyph("BoxUpperRight", s.box_upper_right);
     glyph("BoxLowerLeft", s.box_lower_left);   glyph("BoxLowerRight", s.box_lower_right);
@@ -715,7 +762,8 @@ bool save_radio_settings(const RadioSettings& s, std::string* err) {
              + P + "Interpolation=" + b(o.interp) + "\n" + P + "ZAxis=" + b(o.z) + "\n" + P + "ZDepth=" + num(o.z_depth) + "\n"
              + P + "ZSource=" + (o.z_source == 1 ? "level" : "speed") + "\n" + P + "TraceLength=" + std::to_string(o.trace) + "\n"
              + P + "Rotate=" + b(o.rotate) + "\n" + P + "MonoPhase=" + b(o.mono_phase) + "\n"
-             + P + "Palette=" + kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)] + "\n" + P + "Glow=" + num(o.glow) + "\n";
+             + P + "Palette=" + kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)] + "\n" + P + "Glow=" + num(o.glow) + "\n"
+             + P + "FrameRate=" + std::to_string(o.frame_rate) + "\n" + P + "MusicMode=" + b(o.music) + "\n";
     };
     o << "# Mousiki radio mode -- settings (separate from the music player's config.txt)\n"
          "# Location (Windows): %USERPROFILE%\\.config\\mousiki\\radio_config.txt\n"
@@ -761,10 +809,14 @@ bool save_radio_settings(const RadioSettings& s, std::string* err) {
          "OnAirAscii=" << (s.on_air_ascii ? "true" : "false") << "\n"
          "PulseWave=" << (s.pulse_wave ? "true" : "false") << "\n"
          "DummyButtons=" << (s.dummy_buttons ? "true" : "false") << "\n"
-         "# right of the station info: osci | sphere | off\n"
+         "# right of the station info: osci | sphere | off | spectro\n"
          "OsciSphere=" << on_off_value(s, 3) << "\n"
          "Visualizer=" << (s.element_visualizer ? "true" : "false") << "\n"
          "StereoSound=" << (s.stereo ? "true" : "false") << "\n"
+         "# false = left out entirely: not in the \".\" cycle of the scope block (the sphere always is); the windows\n"
+         "# (SHIFT+8 spectrogram, SHIFT+9 oscilloscope) work either way\n"
+         "UseOscilloscope=" << (s.use_osci ? "true" : "false") << "\n"
+         "UseSpectrogram=" << (s.use_spectro ? "true" : "false") << "\n"
          "# static that fades in when another station is tuned and fades out when the stream plays\n"
          "TuneNoise=" << (s.tune_noise ? "true" : "false") << "\n"
          "# timeshift buffer for pause / rewind / recording from the past: 5 | 15 | 30 | 45 | 60 minutes (on disk, 11.5 MB per minute)\n"
@@ -818,18 +870,24 @@ bool save_radio_settings(const RadioSettings& s, std::string* err) {
          "# Oscilloscope (SHIFT+o overlay), one block per style: braille = Osci<name>, image = OsciImage<name>. Each style keeps its own values.\n"
          "# Decay = afterglow 0.00-0.99 | DotThreshold 0.01-1.00 (braille: lower = thicker line) | TailBrightness 0.00-1.00 | Interpolation = connect the\n"
          "# samples with lines | ZAxis = beam intensity (ZDepth 0-1, ZSource speed|level) | TraceLength 128-1024 samples | Rotate = 45 degrees (mid vertical) |\n"
-         "# MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom)\n"
+         "# MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom) |\n"
+         "# FrameRate = screen refresh while that style is in use: 30 | 45 | 60 | 90 | 120 | 165 | MusicMode = oscilloscope music mode (the scopes get\n"
+         "# the stream itself, no EQ / normalization / volume, at a fixed scale and without the phase portrait)\n"
          << osci_block("Osci", s.osci_set[0]) << osci_block("OsciImage", s.osci_set[1]) <<
          "# ON/OFF tab: braille | image (a real pixel picture drawn by the terminal: Kitty graphics or Sixel; braille where there is neither)\n"
          "OsciStyle=" << (s.osci_style == 1 ? "image" : "braille") << "\n"
          "# image style: auto | kitty | sixel | off\n"
          "OsciImageProtocol=" << s.gfx_protocol << "\n"
-         "# screen refresh: 30 | 45 | 60 | 90 frames per second (higher = more CPU and, for the image, more data for the terminal)\n"
-         "FrameRate=" << s.frame_rate << "\n\n"
+         "# image style: full | half | third of the screen resolution (lower = less work and data per frame, a softer and wider beam)\n"
+         "OsciImageResolution=" << osci_res_name(s.image_scale) << "\n"
+         "\n"
+
          "BoxUpperLeft=" << s.box_upper_left << "\nBoxUpperRight=" << s.box_upper_right << "\n"
          "BoxLowerLeft=" << s.box_lower_left << "\nBoxLowerRight=" << s.box_lower_right << "\n"
          "BoxVertical=" << s.box_vertical << "\nBoxHorizontal=" << s.box_horizontal << "\n"
          "ListSeparator=" << s.list_separator << "\n";
+    spectro_config_write(o, s.spectro, "#");
+    o << "\n";
     if (!o) { if (err) *err = "cannot write " + target.string(); return false; }
     return true;
 }

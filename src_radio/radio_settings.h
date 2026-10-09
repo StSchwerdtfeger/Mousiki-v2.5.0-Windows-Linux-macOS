@@ -16,6 +16,7 @@
 //   list_*        the STATIONS list rows (also used for the station names in the PRESETS pane)
 //   header        secondary text: captions ("off air"), the ON AIR sign while nothing is live, empty-pane messages, status lines
 //   legend        key command legends: the "[TAB] Switch pane | ..." hint lines, hint tails, error lines, cheatsheet titles
+#include "spectrogram.h"
 #include <filesystem>
 #include "equalizer.h"
 #include <map>
@@ -42,6 +43,8 @@ struct OsciSet {
     bool mono_phase = true;             // near-mono signals draw a phase portrait instead of a diagonal line
     int palette = 0;                    // see kOsciPaletteNames
     float glow = 0.60f;                 // image: size / strength of the bloom around the beam, 0.00 .. 1.00
+    int frame_rate = 30;                // screen refresh while this style is in use: 30 | 45 | 60 | 90 | 120 | 165 fps
+    bool music = false;                 // oscilloscope music mode (SHIFT+o): unprocessed signal, fixed scale, no phase portrait
 };
 
 struct RadioSettings {
@@ -90,9 +93,12 @@ struct RadioSettings {
     bool on_air_ascii = true;                   // the ON AIR sign (with its colour wave)
     bool pulse_wave = true;                     // the faint circle burst behind the sign
     bool dummy_buttons = true;                  // the <<< MUTE >>> boxes next to the frequency band
-    int scope_mode = 0;                         // right of the station info: 0 = oscilloscope, 1 = sphere, 2 = off
+    int scope_mode = 3;                         // right of the station info: 0 = oscilloscope, 1 = sphere, 2 = off, 3 = spectrogram (default)
+    SpectroSettings spectro;                    // the spectrogram (SHIFT+i overlay, SHIFT+u full screen), Audacity's defaults
     bool element_visualizer = true;             // the FFT spectrum under the station info
     bool stereo = true;                         // false = fold left + right to mono
+    bool use_osci = true;                       // ON/OFF "Use oscilloscope": false = never in the scope block / "." cycle
+    bool use_spectro = true;                    // ON/OFF "Use spectrogram": the same for the spectrogram
     bool normalize = true;                      // loudness normalisation (SHIFT+v overlay, `v` toggles)
     double normalize_target_lufs = -16.0;       // -40 .. 0
     double normalize_max_boost_db = 9.0;        // 0 .. 24
@@ -123,7 +129,7 @@ struct RadioSettings {
     int osci_style = 0;                         // ON/OFF: 0 = braille, 1 = image (real pixels through the terminal's graphics protocol)
     std::string gfx_protocol = "auto";          // auto | kitty | sixel | off (MOUSIKI_RADIO_GFX overrides)
     std::string cell_pixels;                    // "WxH" pixels of one terminal cell; empty = ask the terminal
-    int frame_rate = 30;                        // screen refresh: 30 | 45 | 60 | 90 frames per second
+    int image_scale = 2;                        // image style: 1 = full, 2 = half, 3 = a third of the screen resolution
     OsciSet& osci() { return osci_set[osci_style == 1 ? 1 : 0]; }                 // the set of the style in use
     const OsciSet& osci() const { return osci_set[osci_style == 1 ? 1 : 0]; }
 
@@ -222,13 +228,18 @@ struct Knob { const char* label; double lo, hi, step; };
 constexpr Knob kOsciKnobs[3] = {{"Decay", 0.00, 0.99, 0.01}, {"Dot threshold", 0.01, 1.00, 0.01}, {"Tail", 0.00, 1.00, 0.02}};
 // Overlay rows (ids). Which of them are shown depends on the style: osci_visible_rows().
 enum OsciRow { kOrDecay, kOrDot, kOrTail, kOrInterp, kOrZ, kOrZDepth, kOrZSource, kOrTrace, kOrRotate, kOrMono, kOrPalette, kOrGlow,
-               kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOsciRowCount };
+               kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOrRes, kOrMusic, kOsciRowCount };
+// image style: the picture is rendered at 1/1, 1/2 or 1/3 of the screen resolution and enlarged on the way to the terminal
+const char* osci_res_name(int scale);   // "full" | "half" | "third"
+int osci_res_parse(const std::string& v, int def);
 std::vector<int> osci_visible_rows(const RadioSettings& s);
 constexpr Knob kNormKnobs[3] = {{"Normalize", 0.0, 1.0, 1.0}, {"Target level", -40.0, 0.0, 1.0}, {"Max boost", 0.0, 24.0, 1.0}};
 std::string osci_row_label(int row);
 std::string osci_row_value(const RadioSettings& s, int row);
 void osci_adjust(RadioSettings& s, int row, int dir);     // dir -1 / +1
 void osci_reset(RadioSettings& s);
+// "Use oscilloscope / spectrogram" off: what is switched off never stays in the scope block.
+void radio_enforce_visuals(RadioSettings& s);
 void norm_adjust(RadioSettings& s, int row, int dir);     // row 0 = on/off (left off, right on)
 void norm_reset(RadioSettings& s);                        // target + boost back to the defaults; on/off is left alone
 

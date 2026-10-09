@@ -35,6 +35,9 @@
 #include "radio_gfx.h"
 #include "radio_stations.h"
 #include "radio_ui.h"
+#include "scope_window.h"
+#include "keyboard_layout.h"
+#include "spectrogram.h"
 #include "mode_switch.h"
 #include "radio_settings.h"
 #include "radio_fuzzy.h"
@@ -566,6 +569,13 @@ int radio_main(int argc, char** argv) {
     RadioBrowser browser;
     bool yt_jump = false;                 // after a YouTube search from the overlay: move to the results when they arrive
     double notice_until = 0.0;
+    bool scope_win_was = scope_window_running();
+    std::vector<std::string> prev_lines;               // the screen's lines as last sent (diff_frame_lines)
+    bool out_clear_next = false;                       // the next frame clears the screen (full-screen spectrogram on / off)
+    SpectroGfx spectro_gfx;                            // the spectrogram picture (tiles)
+    auto last_full_frame = Clock::now();   // the window may have been opened in the player already
+    unsigned long scope_win_tick = 0;
+    bool spectro_win_was = spectro_window_running();
     // Starts a recording at stream position `from_frame` (frames at 48 kHz; from the record overlay). The file is
     // named after the wall-clock time the recorded audio was on air.
     auto start_record = [&](long long from_frame, double seconds_before_now) {
@@ -978,6 +988,49 @@ int radio_main(int argc, char** argv) {
     };
     auto key_change_end = [&](bool changed) { if (!changed && !key_undo.empty()) key_undo.pop_back(); };
 
+    // SHIFT+9 / SHIFT+8: the oscilloscope / the spectrogram in their own windows (graphics card, needs SDL2). They work
+    // whatever is switched off on the ON/OFF tab, and also while an overlay is open.
+    auto window_key_label = [&](const char* id) {
+        for (int i = 0; i < kKeyActionCount; ++i)
+            if (std::string(kKeyActions[i].id) == id) return muisc::symbol_key_label(key_binding(cfg, i));
+        return std::string();
+    };
+    auto toggle_scope_window = [&]() {
+        if (scope_window_running()) {
+            scope_window_close();
+            scope_win_was = false;
+            ui.model.notice = "scope window closed"; notice_until = ui.model.t_sec + 3;
+            return;
+        }
+        ScopeWinConfig c;
+        fill_scope_window_config(cfg, engine.status(), c);
+        scope_window_set_config(c);   // the settings are there before the first sample
+        std::string err;
+        if (scope_window_open(&err)) {
+            scope_win_was = true;
+            ui.model.notice = "scope window opened: F / double-click fullscreen, T always on top, ESC or " +
+                              window_key_label("ScopeWindow") + " closes";
+            notice_until = ui.model.t_sec + 6;
+        } else { ui.model.notice = err; notice_until = ui.model.t_sec + 10; }
+    };
+    auto toggle_spectro_window = [&]() {
+        if (spectro_window_running()) {
+            spectro_window_close();
+            spectro_win_was = false;
+            ui.model.notice = "spectrogram window closed"; notice_until = ui.model.t_sec + 3;
+            return;
+        }
+        SpectroWinConfig c;
+        fill_spectro_window_config(cfg, engine.status(), c);
+        spectro_window_set_config(c);
+        std::string err;
+        if (spectro_window_open(&err)) {
+            spectro_win_was = true;
+            ui.model.notice = "spectrogram window opened: F / double-click fullscreen, T always on top, ESC or " +
+                              window_key_label("SpectroWindow") + " closes";
+            notice_until = ui.model.t_sec + 6;
+        } else { ui.model.notice = err; notice_until = ui.model.t_sec + 10; }
+    };
     while (running) {
         // search results arrive on a worker thread: copy the newest snapshot into the model, once per frame
         {
@@ -1007,6 +1060,36 @@ int radio_main(int argc, char** argv) {
             } else engine.set_fade(1.0f);
         }
         apply_timeshift();   // the buffer size changed in the settings (or was put back by discarding them)
+        engine.set_scope_raw(cfg.osci().music);   // oscilloscope music mode: the scopes get the unprocessed stream
+        radio_enforce_visuals(cfg);   // ON/OFF "Use oscilloscope / spectrogram": a switched-off one never stays
+        {   // the spectrogram window (SHIFT+8): the same
+            const bool running_sp = spectro_window_running();
+            if (running_sp && (scope_win_tick % 6) == 3) {
+                SpectroWinConfig c;
+                fill_spectro_window_config(cfg, engine.status(), c);
+                spectro_window_set_config(c);
+            }
+            if (spectro_win_was && !running_sp) {
+                const std::string e = spectro_window_take_error();
+                ui.model.notice = e.empty() ? "spectrogram window closed" : e;
+                notice_until = ui.model.t_sec + (e.empty() ? 3 : 10);
+            }
+            spectro_win_was = running_sp;
+        }
+        {   // the scope window (SHIFT+9): its settings / title, and a window closed from its own side
+            const bool running = scope_window_running();
+            if (running && (++scope_win_tick % 6) == 0) {
+                ScopeWinConfig c;
+                fill_scope_window_config(cfg, engine.status(), c);
+                scope_window_set_config(c);
+            }
+            if (scope_win_was && !running) {
+                const std::string e = scope_window_take_error();
+                ui.model.notice = e.empty() ? "scope window closed" : e;
+                notice_until = ui.model.t_sec + (e.empty() ? 3 : 10);
+            }
+            scope_win_was = running;
+        }
         if (!ui.model.scope_notice.empty() && ui.model.t_sec > ui.model.scope_notice_until) ui.model.scope_notice.clear();
         {   // history store, YouTube overlay and recording notices: once per frame
             const RadioStatus rs = engine.status();
@@ -1340,6 +1423,34 @@ int radio_main(int argc, char** argv) {
                 if (k == 27 || k == key_of(cfg, "EqMenu")) { eq_close(); continue; }
                 if (k == 's' || k == 'S') { eq_begin_naming(cfg, eu); set_text_entry(true); continue; }
                 if (k == kKeyDelete || k == 'x' || k == 'X') { if (eq_delete_custom(cfg, eu, armed)) { ui.model.settings.dirty = true; settings_save(); } continue; }
+                continue;
+            }
+            if (ui.model.overlay == 6 && !ui.model.cheat_open) {   // spectrogram options (SHIFT+i)
+                int& orow = ui.model.overlay_row;
+                if (k == 3 || k == kKeyCtrlC) { ui.model.overlay = 0; settings_save(); running = false; continue; }
+                if (arrow) {
+                    if (k == 'A') orow = orow <= kSrStyle ? kSpectroRowCount - 1 : orow - 1;   // no "Display" row (the . key's job)
+                    else if (k == 'B') orow = orow >= kSpectroRowCount - 1 ? kSrStyle : orow + 1;
+                    else if (k == 'D' || k == 'C') {
+                        if (orow == kSrDisplay) osci_adjust(cfg, kOrDisplay, k == 'C' ? +1 : -1);   // osci -> sphere -> spectro
+                        else spectro_adjust(cfg.spectro, orow, k == 'C' ? +1 : -1);
+                        ui.model.settings.dirty = true;
+                    }
+                    continue;
+                }
+                if (k == key_of(cfg, "ScopeWindow")) { toggle_scope_window(); continue; }      // the windows: always
+                if (k == key_of(cfg, "SpectroWindow")) { toggle_spectro_window(); continue; }
+                if (k == 27 || k == key_of(cfg, "SpectroMenu")) { ui.model.overlay = 0; settings_save(); continue; }
+                if (k == key_of(cfg, "SpectroFull")) {
+                    ui.model.spectro_full = !ui.model.spectro_full; out_clear_next = true;
+                    continue;
+                }
+                if (k == 'r' || k == 'R') { spectro_reset(cfg.spectro); ui.model.settings.dirty = true; continue; }
+                continue;
+            }
+            if (ui.model.spectro_full && ui.model.overlay == 0 && !ui.model.cheat_open && k == 27 && !arrow) {   // ESC leaves the full screen
+                ui.model.spectro_full = false;
+                out_clear_next = true;
                 continue;
             }
             if (ui.model.overlay != 0 && !ui.model.cheat_open) {
@@ -1915,9 +2026,21 @@ int radio_main(int argc, char** argv) {
                 case 'x': engine.stop(); break;
                 case 's': settings_open(); break;      // the RADIO SETTINGS screen
                 case 'L': ui.model.stov = StationsOverlay{}; ui.model.stov.open = true; break;   // the big STATIONS overlay
-                case '.':                              // switch the scope block between the oscilloscope and the sphere
-                    cfg.scope_mode = cfg.scope_mode == 1 ? 0 : 1;
+                case ')': toggle_scope_window(); break;     // SHIFT+9: the oscilloscope in its own window
+                case '(': toggle_spectro_window(); break;   // SHIFT+8: the spectrogram in its own window
+                case '.':                              // the scope block: oscilloscope -> sphere -> spectrogram -> oscilloscope
+                    // (what is switched off on the ON/OFF tab is skipped; the sphere is always there)
+                    for (int n = 0; n < 3; ++n) {
+                        cfg.scope_mode = cfg.scope_mode == 0 ? 1 : cfg.scope_mode == 1 ? 3 : 0;
+                        if ((cfg.scope_mode == 0 && !cfg.use_osci) || (cfg.scope_mode == 3 && !cfg.use_spectro)) continue;
+                        break;
+                    }
                     ui.model.settings.dirty = true;
+                    break;
+                case 'I': ui.model.overlay = 6; ui.model.overlay_row = kSrStyle; break;   // Shift+I: spectrogram options
+                case 'U':                              // Shift+U: spectrogram full screen
+                    ui.model.spectro_full = !ui.model.spectro_full;
+                    out_clear_next = true;
                     break;
                 case 'h': {                            // the LISTENING HISTORY
                     HistoryModel& hm = ui.model.hmenu;
@@ -1974,7 +2097,7 @@ int radio_main(int argc, char** argv) {
 
         const int rows = term.rows(), cols = term.cols();
         std::string out;
-        if (rows != last_rows || cols != last_cols) { out += "\x1b[2J"; last_rows = rows; last_cols = cols; }
+        if (rows != last_rows || cols != last_cols || out_clear_next) { out += "\x1b[2J"; last_rows = rows; last_cols = cols; out_clear_next = false; }
         if (cols < kUiCols || rows < kUiRows) {
             last_too_small = true;
             const std::string msg = "Terminal too small: radio mode needs " + std::to_string(kUiCols) + "x" + std::to_string(kUiRows)
@@ -1988,9 +2111,9 @@ int radio_main(int argc, char** argv) {
             {   // cell size in pixels (it changes with the font and the zoom), and whether this frame sends a new picture
                 gfx_cell_pixels(cfg.cell_pixels, ui.model.cell_w, ui.model.cell_h);
                 ++gfx_tick;
-                // how many pictures per second the terminal is sent: Kitty (compressed) up to 60, uncompressed 20, Sixel 15
-                const int cap = gfx == GfxProto::Kitty ? (gfx_compressed() ? 60 : 20) : 15;
-                const unsigned long every = static_cast<unsigned long>(std::max(1, (cfg.frame_rate + cap / 2) / cap));
+                // how many pictures per second the terminal is sent: Kitty up to 60, Sixel 30 (full) / 60 (half, third)
+                const int cap = gfx_picture_cap(gfx, cfg.image_scale);
+                const unsigned long every = static_cast<unsigned long>(std::max(1, (cfg.osci().frame_rate + cap / 2) / cap));
                 ui.model.gfx_due = (gfx_tick % every) == 0;
             }
             auto frame = render_radio_frame(ui.model, engine.status(), engine, cfg);
@@ -1998,15 +2121,39 @@ int radio_main(int argc, char** argv) {
             // whole terminal can never scroll. No per-line "\x1b[K" either: a line that fills the last
             // column leaves the cursor in the pending-wrap state there, and "erase to end of line"
             // would wipe that last character.
-            for (size_t i = 0; i < frame.size(); ++i) { out += frame[i]; if (i + 1 < frame.size()) out += "\r\n"; }
+            {   // only the lines that changed (at 120 / 165 fps the whole screen every frame would be megabytes per second);
+                // the whole frame after a clear, when the layout changed, and every 2 s
+                const bool cleared = out.find("\x1b[2J") != std::string::npos;
+                const bool heal = now - last_full_frame > std::chrono::seconds(2);
+                std::string body;
+                for (size_t i = 0; i < frame.size(); ++i) { body += frame[i]; if (i + 1 < frame.size()) body += "\r\n"; }
+                std::string d;
+                if (diff_frame_lines(body, prev_lines, d) && !cleared && !heal) out += d;
+                else { out += body; last_full_frame = now; }
+            }
+            // Sixel: the text skips the picture's cells, so the picture on screen stays and is only sent when there is a new
+            // one -- or when it is not on screen yet / the screen was cleared (then the current one is sent at once).
+            const int sp_proto = gfx == GfxProto::Kitty ? 1 : gfx == GfxProto::Sixel ? 2 : 0;
+            const bool sp_img = ui.model.spectro_area[0] >= 0 && sp_proto != 0;
+            if (!ui.model.spectro_used) spectro().set_visible(false);
+            if (out.find("\x1b[2J") != std::string::npos) spectro_gfx.invalidate();
+            const bool sixel_on = (gfx == GfxProto::Sixel && ui.model.gfx.active) || (sp_img && sp_proto == 2);
+            if (sixel_on && (!gfx_shown || out.find("\x1b[2J") != std::string::npos)) ui.model.gfx.fresh = true;
+            gfx_fill_holes(out, sixel_on);
             // the image goes after the text (Sixel replaces the cells; a Kitty image sits under the text and is replaced in place)
             if (ui.model.gfx.active && gfx != GfxProto::None) { out += gfx_emit(gfx, ui.model.gfx); gfx_shown = ui.model.gfx.crop < ui.model.gfx.cols; }
             else if (gfx_shown) { out += gfx_clear(gfx); gfx_shown = false; }
             if (gfx == GfxProto::None && gfx_shown) gfx_shown = false;
+            if (sp_img) {
+                const int* a = ui.model.spectro_area;
+                const int* sk = ui.model.spectro_skip;
+                out += spectro_gfx.emit(sp_proto, cfg.spectro, spectro(), a[0], a[1], a[2], a[3], std::max(1, ui.model.cell_w),
+                                        std::max(1, ui.model.cell_h), true, sk[0], sk[1], sk[2], sk[3]);
+            } else if (spectro_gfx.shown()) out = spectro_gfx.clear(sp_proto) + out;   // before the new screen's text
         }
         write_frame(out);
         // frame pacing: one frame every 1 / frame_rate seconds (the render time counts), never a burst to catch up
-        next_frame += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / std::clamp(cfg.frame_rate, 30, 90)));
+        next_frame += std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(1.0 / std::clamp(cfg.osci().frame_rate, 30, 165)));
         const auto after = Clock::now();
         if (next_frame < after) next_frame = after;
         std::this_thread::sleep_until(next_frame);
@@ -2017,6 +2164,7 @@ int radio_main(int argc, char** argv) {
     rhist.tick(engine.status(), 0.0, static_cast<long long>(std::time(nullptr)));   // closes the live line
     rhist.close_live();
     if (gfx_shown) { write_frame(gfx_clear(gfx)); gfx_shown = false; }
+    if (spectro_gfx.shown()) write_frame(spectro_gfx.clear(gfx == GfxProto::Kitty ? 1 : 2));   // nothing of it may outlive the radio
     if (switch_mode) terminal_hold_alt_screen();   // the player takes the screen over: no flash of the shell in between
     return switch_mode ? kExitSwitchMode : 0;
 }

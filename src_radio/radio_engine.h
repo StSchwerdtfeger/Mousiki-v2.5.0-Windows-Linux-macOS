@@ -126,6 +126,8 @@ public:
     double jump(double seconds);        // -30 = back 30 s, +30 = forward; clamped to the buffer; returns the real move
     void go_live();                     // back to the live stream
     // false = left and right are folded together (mono); the loudness measurement restarts.
+    // Oscilloscope music mode: the scopes get the stream before mono fold, equalizer, normalization and volume.
+    void set_scope_raw(bool on);
     void set_stereo(bool on);
     // Loudness normalisation like the music player's: the stream's measured loudness is brought to `target_lufs`
     // (-40..0), amplifying by at most `max_boost_db` (0..24). The gain glides over about a second.
