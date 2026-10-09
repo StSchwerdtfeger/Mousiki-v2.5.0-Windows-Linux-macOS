@@ -1,5 +1,6 @@
 #include "settings.h"
 #include "path_utf8.h"
+#include "version.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -306,7 +307,7 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeySeekForward",                 "ARROW_KEY_RIGHT"},
             {"HKeySeekBackward",                "ARROW_KEY_LEFT"},
             // "+" / "-" = volume, the same keys as in the radio mode.
-            // (Before v3.0.1 they were "1" / "2" and "+" cycled the lyrics
+            // (Before v3.1.0 they were "1" / "2" and "+" cycled the lyrics
             // area -- that one is "." now; old configs are migrated below.)
             {"HKeyIncreaseVolume",              "+"},
             {"HKeyDecreaseVolume",              "-"},
@@ -319,7 +320,7 @@ void apply_default_hotkeys(Settings& s) {
             {"HKeyClearFilter",                 "c"},
             {"HKeyQuit",                        "q"},
             {"HKeyDownloadStream",              "y"},
-            // "k" opens the karaoke overlay; Refresh UI moved to "r" (v3.0.1, migrated below).
+            // "k" opens the karaoke overlay; Refresh UI moved to "r" (v3.1.0, migrated below).
             {"HKeyRefreshUi",                   "r"},
             {"HKeyKaraoke",                     "k"},
             {"HKeyConsole",                     "t"},
@@ -407,7 +408,7 @@ void apply_default_hotkeys(Settings& s) {
         // and no longer written back (see save_settings()'s hkey_order), so
         // the next save removes the line from config.txt for good.
         s.hotkeys.erase("HKeyResetPreference");
-        // v3.0.1: volume moved from "1" / "2" to "+" / "-", and the lyrics
+        // v3.1.0: volume moved from "1" / "2" to "+" / "-", and the lyrics
         // area cycle from "+" to ".". A config that still carries the old
         // trio exactly as it was shipped is moved over as a whole; a user
         // who rebound any of the three keeps their own keys. The move is
@@ -426,7 +427,7 @@ void apply_default_hotkeys(Settings& s) {
                 if (!taken) { up->second = "+"; down->second = "-"; lyr->second = "."; }
             }
         }
-        // v3.0.1: "k" is the karaoke overlay now and Refresh UI moved to "r".
+        // v3.1.0: "k" is the karaoke overlay now and Refresh UI moved to "r".
         // A config from before (Refresh UI still on "k", no karaoke key yet)
         // is moved over -- unless the user has put something else on "r".
         if (s.hotkeys.find("HKeyKaraoke") == s.hotkeys.end()) {
@@ -1056,6 +1057,42 @@ static Settings load_from_legacy(const fs::path& path) {
 // Public load/save
 // =====================================================================
 
+// The ABOUT APP text lives in config.txt (ClassTextAboutApp), so a config saved by an older
+// version would show that version forever. The port's "Version ... : vX.Y.Z" line is brought
+// up to the running build's version; the original author's "original and final v1.0" line has
+// no vX.Y.Z and is left alone. The column after the version keeps its place.
+static void refresh_about_version(Settings& s) {
+    const std::string cur = std::string("v") + MOUSIKI_VERSION;
+    auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+    for (auto& line : s.about_app_lines) {
+        if (line.rfind("Version", 0) != 0) continue;
+        for (size_t i = 0; i + 1 < line.size(); ++i) {
+            if (line[i] != 'v' || !is_digit(line[i + 1])) continue;
+            size_t j = i + 1;
+            int dots = 0;
+            while (j < line.size() && (is_digit(line[j]) || (line[j] == '.' && j + 1 < line.size() && is_digit(line[j + 1])))) {
+                if (line[j] == '.') ++dots;
+                ++j;
+            }
+            if (dots != 2) continue;                     // only vX.Y.Z (not "v1.0")
+            const std::string old = line.substr(i, j - i);
+            if (old == cur) break;
+            std::string tail = line.substr(j);
+            const long diff = static_cast<long>(cur.size()) - static_cast<long>(old.size());
+            if (diff > 0) {
+                size_t spaces = 0;
+                while (spaces < tail.size() && tail[spaces] == ' ') ++spaces;
+                const size_t cut = std::min(static_cast<size_t>(diff), spaces > 1 ? spaces - 1 : 0);
+                tail.erase(0, cut);
+            } else if (diff < 0) {
+                tail.insert(0, static_cast<size_t>(-diff), ' ');
+            }
+            line = line.substr(0, i) + cur + tail;
+            break;
+        }
+    }
+}
+
 Settings load_settings() {
     fs::path cfg = config_path();
     std::error_code ec;
@@ -1097,19 +1134,31 @@ Settings load_settings() {
 
     apply_default_hotkeys(s);
     if (s.about_app_lines.empty()) {
+        // Same text as the ClassTextAboutApp block of the config.txt template (and the radio's ABOUT APP tab).
         s.about_app_lines = {
-            "Devloper : ender                Github   : itzender5820",
-            "Email    : itz.ender5820@gmail.com",
-            "Version  : original and final v1.0       Licence  : Apache licence 2.0",
-            "",
-            "Windows port : Steffen Schwerdtfeger   Github   : StSchwerdtfeger",
-            "Version      : v3.0.0                  Licence  : Apache licence 2.0",
-            "Adjusted to run on Windows, with the help of AI tools.",
-            "",
             "Mousiki",
+            "",
             "A terminal music player built for people who prefer control.",
-            "Zero external UI bloat: 100% native POSIX terminal runtime.",
+            "Zero external UI bloat. Mousiki is designed around a fast, ",
+            "focused TUI with no unnecessary interface layers. A terminal ",
+            "music player built for people who prefer control.",
+            "",
+            "Developer : ender                         Github   : itzender5820",
+            "Email     : itz.ender5820@gmail.com",
+            "Version   : original and final v1.0       Licence  : Apache licence 2.0",
+            "",
+            "Windows Port / Modification : Steffen Schwerdtfeger     Github   : StSchwerdtfeger",
+            "Version                     : v" MOUSIKI_VERSION "                    Licence  : Apache licence 2.0",
+            "",
+            "Adjusted to also run on Windows. Several features and modifications were",
+            "added, the general design remained. Additions: radio mode, playlist menu, ",
+            "meta data editor incl. fetch meta data function via AcoustID, listening ",
+            "history, big list/queue overlays, equalizer, YX mode oscillator several ",
+            "new hot keys and then some... See Readme.md for full list of additions ",
+            "and changes along the win native port. Done with the help of AI tools.",
         };
+    } else {
+        refresh_about_version(s);
     }
     return s;
 }

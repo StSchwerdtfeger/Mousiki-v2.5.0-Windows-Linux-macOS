@@ -165,7 +165,7 @@ bool osci_config_key(Settings& s, const std::string& key, const std::string& val
     if (key == "OsciStyle") { s.osci_style = lower(value) == "image" ? 1 : 0; return true; }
     if (key == "OsciImageProtocol") { s.gfx_protocol = lower(value); return true; }
     if (key == "OsciImageResolution") { s.image_scale = osci_res_parse(value, s.image_scale); return true; }
-    if (key == "FrameRate") {   // up to v3.1 one value for both styles
+    if (key == "FrameRate") {   // up to v3.0.0 one value for both styles
         const int fr = fps_snap(as_int(value, 30, 30, 165));
         s.osci_set[0].frame_rate = s.osci_set[1].frame_rate = fr;
         return true;

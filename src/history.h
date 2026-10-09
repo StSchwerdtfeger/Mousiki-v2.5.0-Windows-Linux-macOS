@@ -74,7 +74,7 @@ struct HistoryArchiveTitle {
     double listened_sec = 0.0;
     // For the smart lists (ADD SMART HISTORY TO QUEUE): plays per calendar day
     // ("YYYY-MM-DD" -> count; "top of the week / month / ...") and per time of
-    // day (history_tod_bucket()). Only filled for plays folded by v3.0.1+ --
+    // day (history_tod_bucket()). Only filled for plays folded by v3.1.0+ --
     // older archives simply have no dates, so those plays count for the
     // all-time lists only.
     std::map<std::string, int> day_plays;

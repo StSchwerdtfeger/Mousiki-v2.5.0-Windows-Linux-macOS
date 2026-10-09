@@ -5453,6 +5453,17 @@ std::vector<std::string> App::build_search_bar(int total_width) const {
         const std::string sl = sleep_timer_label();
         if (!sl.empty()) label += "  [" + sl + "]";
     }
+    // The online resolve/download step (YouTube, SoundCloud, Bandcamp) shows its live note here, in the search box's
+    // top border, instead of on an extra row under the list: that row made the frame one line taller than the
+    // terminal for a moment, which scrolled the whole UI.
+    if (load_in_progress_.load() && load_stage_.load() == 1) {
+        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - load_started_at_).count();
+        const std::string t = std::to_string(static_cast<int>(secs)) + "s)";
+        const int room = total_width - 5 - 5;   // search box width minus its corners and label padding
+        for (const std::string& note : {"  resolving/downloading... (" + t, "  downloading... (" + t, "  (" + t}) {
+            if (display_width(label + note) <= room) { label += note; break; }
+        }
+    }
 
     std::string content;
     if (mode_ == Mode::Search) {
@@ -11279,8 +11290,8 @@ std::string App::render_frame(TerminalIO& term) {
     // that will really be printed below the box (0, or the prompt's wrapped
     // line count, or 1), the frame comes out term_rows_ - 1 tall in every
     // case -- with or without a prompt/loading row, no jitter, no scroll.
-    const bool show_load_line = load_in_progress_.load() && load_stage_.load() == 1;
-    int status_rows = std::max<int>(static_cast<int>(prompt_lines.size()), show_load_line ? 1 : 0);
+    // The resolving/downloading note lives in the search box's top border (build_search_bar), not down here.
+    int status_rows = static_cast<int>(prompt_lines.size());
     int fixed_h = static_cast<int>(metadata_lines.size() + progress_lines.size() + search_lines.size())
                 + status_rows; // rows really drawn under the list box (0 when none are)
     // Two things used to be missing from this budget, and together they made
@@ -11365,13 +11376,6 @@ std::string App::render_frame(TerminalIO& term) {
         // padding adds exactly the 2 columns that takes back, so the result
         // is exactly W wide -- this line can never wrap either.
         for (const auto& l : prompt_lines) frame << "\x1b[43;30m " << l << " \x1b[0m\n";
-    } else if (show_load_line) {
-        // Only the online resolve/download step shows a live status —
-        // local loads are probe-only now (near-instant) and deliberately
-        // silent, no "loading..." flash. Short, ASCII-only and seconds-
-        // limited, so it stays far inside any terminal width.
-        double secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - load_started_at_).count();
-        frame << "  resolving/downloading... (" << static_cast<int>(secs) << "s)\n";
     }
 
     frame << "\x1b[0J";

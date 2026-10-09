@@ -1,5 +1,5 @@
 #pragma once
-// Tracker modules and chiptunes (v3.0.1).
+// Tracker modules and chiptunes (v3.1.0).
 //
 //   * Tracker modules (MOD, XM, IT, S3M, MPTM, ...) and game-music formats (NSF, SPC, GBS, VGM, AY, HES, KSS, SAP, ...)
 //     are decoded by ffmpeg, which reads them through libopenmpt (BSD-3-Clause) and Game Music Emu (LGPL-2.1). Both
