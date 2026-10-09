@@ -5,6 +5,9 @@
 namespace muisc {
 
 struct OnlineResult {
+    // A YouTube video id, or -- for SoundCloud / Bandcamp results -- the track's page URL ("https://soundcloud.com/...",
+    // "https://artist.bandcamp.com/track/..."): every place that keeps an online track (queue, history, playlists)
+    // stores this one string, and YoutubeSource::resolve_by_id() downloads either kind.
     std::string video_id;
     std::string title;
     std::string uploader;
@@ -49,6 +52,12 @@ public:
     // them. `error_out`, if given, is filled in on failure (empty
     // result, non-zero exit, or an unparseable link).
     std::vector<OnlineResult> list_playlist(const std::string& url, std::string* error_out = nullptr);
+
+    // SoundCloud (/sc:): yt-dlp's "scsearch" (SoundCloud's own search API).
+    std::vector<OnlineResult> search_soundcloud(const std::string& query, int count = 15);
+    // Bandcamp (/b:): yt-dlp has no Bandcamp search, so scripts/bandcamp_search.py asks Bandcamp's search directly
+    // (its search API, the search page as a fallback) and prints the tracks it finds as JSON lines.
+    std::vector<OnlineResult> search_bandcamp(const std::string& query, int count, const std::string& script_path);
 };
 
 } // namespace muisc

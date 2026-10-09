@@ -6,6 +6,7 @@
 #include <utility>
 #include <vector>
 #include "equalizer.h"
+#include "spectrogram.h"
 
 namespace muisc {
 
@@ -30,6 +31,8 @@ struct OsciSet {
     bool mono_phase = true;             // near-mono signals draw a phase portrait instead of a diagonal line
     int palette = 0;                    // see kOsciPaletteNames
     float glow = 0.60f;                 // image: size / strength of the bloom around the beam, 0.00 .. 1.00
+    int frame_rate = 30;                // screen refresh while this style is in use: 30 | 45 | 60 | 90 | 120 | 165 fps
+    bool music = false;                 // oscilloscope music mode (SHIFT+o): unprocessed signal, fixed scale, no phase portrait
 };
 
 // Colors: every field holds a plain decimal ANSI 256-color palette index
@@ -52,14 +55,20 @@ struct Settings {
     // element_lyrics_placeholder_ball on/off switch ("Lyric Ball") --
     // the panel now always shows one of the two and this row picks
     // which, from the ON/OFF tab's "Lyric Viz" entry.
-    int lyric_viz = 0;
+    int lyric_viz = 2;                  // default: the spectrogram (in the image style, see SpectroSettings)
+    // Settings -> ON/OFF "Use Lyrics / Use Oscilloscope / Use Spectrogram": false leaves that one out entirely (no
+    // lyrics fetching, not in the "." cycle; the sphere is always there). The windows (SHIFT+8 / SHIFT+9) work anyway.
+    bool use_lyrics = true;
+    bool use_osci = true;
+    bool use_spectro = true;
     // Oscilloscope look, tuned live from the SHIFT+o overlay in the main UI (config.txt: Osci* / OsciImage*).
     // Each style (braille / image) keeps its own parameter set; osci() is the one in use.
     OsciSet osci_set[2];                // [0] = braille, [1] = image
     int osci_style = 0;                 // 0 = braille characters, 1 = image (a real pixel picture: Kitty graphics / Sixel)
     std::string gfx_protocol = "auto";  // image style: auto | kitty | sixel | off
     std::string cell_pixels;            // image style: pixels of one terminal cell "WxH"; empty = ask the terminal
-    int frame_rate = 30;                // screen refresh: 30 | 45 | 60 | 90 frames per second
+    SpectroSettings spectro;            // the spectrogram (SHIFT+i overlay, SHIFT+u full screen), Audacity's defaults
+    int image_scale = 2;                // image style: 1 = full, 2 = half, 3 = a third of the screen resolution (enlarged on output)
     OsciSet& osci() { return osci_set[osci_style == 1 ? 1 : 0]; }
     const OsciSet& osci() const { return osci_set[osci_style == 1 ? 1 : 0]; }
     int lyrics_alignment = 0; // 0=center (default), 1=left, 2=right
@@ -372,7 +381,10 @@ std::string settings_to_text(const Settings& s);
 
 // ---- the SHIFT+o overlay (osci_settings.cpp) ----
 enum OsciRow { kOrDecay, kOrDot, kOrTail, kOrInterp, kOrZ, kOrZDepth, kOrZSource, kOrTrace, kOrRotate, kOrMono, kOrPalette, kOrGlow,
-               kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOsciRowCount };
+               kOrStyle, kOrCells, kOrProtocol, kOrFps, kOrDisplay, kOrRes, kOrMusic, kOsciRowCount };
+// image style: the picture is rendered at 1/1, 1/2 or 1/3 of the screen resolution and enlarged on the way to the terminal
+const char* osci_res_name(int scale);   // "full" | "half" | "third"
+int osci_res_parse(const std::string& v, int def);
 std::vector<int> osci_visible_rows(const Settings& s);          // the rows the overlay shows for the style in use
 std::string osci_row_label(int row);
 std::string osci_row_value(const Settings& s, int row);

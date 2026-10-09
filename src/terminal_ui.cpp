@@ -657,6 +657,29 @@ static int codepoint_width(uint32_t cp) {
 //         uint32_t cp = utf8_decode(clean, i);
 //         int w = codepoint_width(cp);
 
+bool diff_frame_lines(const std::string& body, std::vector<std::string>& prev, std::string& out) {
+    std::vector<std::string> lines;
+    size_t from = 0;
+    while (from < body.size()) {
+        size_t nl = body.find('\n', from);
+        if (nl == std::string::npos) nl = body.size();
+        size_t end = nl;
+        if (end > from && body[end - 1] == '\r') --end;
+        lines.emplace_back(body, from, end - from);
+        from = nl + 1;
+    }
+    const bool same_shape = lines.size() == prev.size();
+    if (same_shape) {
+        for (size_t i = 0; i < lines.size(); ++i) {
+            if (lines[i] == prev[i]) continue;
+            out += "\x1b[" + std::to_string(i + 1) + ";1H\x1b[0m";
+            out += lines[i];
+        }
+    }
+    prev.swap(lines);
+    return same_shape;
+}
+
 int display_width(const std::string& raw) {
     const std::string s = replace_emoji(raw);
     int cols = 0;

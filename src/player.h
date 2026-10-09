@@ -73,6 +73,10 @@ public:
     void set_stereo(bool enabled) { stereo_enabled_.store(enabled); }
     bool stereo_enabled() const { return stereo_enabled_.load(); }
 
+    // Oscilloscope music mode: the scopes (terminal and window) get the decoded signal before the mono fold, the
+    // equalizer, normalization, limiter and volume. What is heard does not change.
+    void set_scope_raw(bool on) { scope_raw_on_.store(on, std::memory_order_relaxed); }
+
     // Loudness normalisation (see loudness_meter.h). Every track is measured
     // in LUFS while it decodes and played with a gain that brings it to
     // `target_lufs`, so a quiet recording and a heavily compressed one end up
@@ -153,6 +157,8 @@ private:
 
     std::atomic<bool> stereo_enabled_{true};
     std::vector<float> fft_mono_;   // scratch for the visualizer's mono feed; sized in play(), never in the callback
+    std::vector<float> scope_raw_;  // scratch: the unprocessed stereo signal for the scopes (oscilloscope music mode)
+    std::atomic<bool> scope_raw_on_{false};
 
     std::atomic<bool> norm_enabled_{false};
     std::atomic<float> norm_target_lufs_{-16.0f};

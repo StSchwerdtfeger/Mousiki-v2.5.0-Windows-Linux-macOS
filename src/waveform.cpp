@@ -5,8 +5,13 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
+#include <chrono>
+#include <cstdio>
+#include <string>
 #include <memory>
+#include <thread>
 #include <vector>
 
 namespace muisc {
@@ -61,6 +66,12 @@ std::vector<float> WaveformQuantizer::generate_high_res_envelope(const std::vect
         }
     }
 
+    return finish_envelope(raw_rms, resolution, smooth);
+}
+
+// From the per-bin RMS to the 0..1 model (smoothing, normalization, contrast curve).
+std::vector<float> WaveformQuantizer::finish_envelope(const std::vector<float>& raw_rms, int resolution, bool smooth) {
+    std::vector<float> high_res(resolution, 0.0f);
     const std::vector<float>* source = &raw_rms;
     std::vector<float> smoothed;
     if (smooth) {
@@ -95,6 +106,29 @@ std::vector<float> WaveformQuantizer::generate_high_res_envelope(const std::vect
     }
 
     return high_res;
+}
+
+std::vector<float> WaveformQuantizer::envelope_from_bins(const std::vector<float>& sumsq, size_t gran, size_t total_frames,
+                                                          int resolution, bool smooth) {
+    std::vector<float> raw_rms(static_cast<size_t>(std::max(0, resolution)), 0.0f);
+    if (resolution <= 0 || sumsq.empty() || gran == 0) return std::vector<float>(static_cast<size_t>(std::max(0, resolution)), 0.0f);
+    if (total_frames == 0) total_frames = sumsq.size() * gran;
+    // the same bins as generate_high_res_envelope (total / resolution frames each), summed from the fine bins; a fine
+    // bin that straddles a boundary counts in proportion
+    std::vector<double> prefix(sumsq.size() + 1, 0.0);
+    for (size_t i = 0; i < sumsq.size(); ++i) prefix[i + 1] = prefix[i] + sumsq[i];
+    auto cum = [&](size_t f) {   // sum of squares of frames [0, f)
+        const size_t b = f / gran;
+        if (b >= sumsq.size()) return prefix.back();
+        return prefix[b] + sumsq[b] * static_cast<double>(f - b * gran) / static_cast<double>(gran);
+    };
+    size_t chunk = total_frames / static_cast<size_t>(resolution);
+    if (chunk == 0) chunk = 1;
+    for (int i = 0; i < resolution; ++i) {
+        const size_t a = static_cast<size_t>(i) * chunk, e = std::min(a + chunk, total_frames);
+        if (e > a) raw_rms[static_cast<size_t>(i)] = static_cast<float>(std::sqrt(std::max(0.0, cum(e) - cum(a)) / static_cast<double>(e - a)));
+    }
+    return finish_envelope(raw_rms, resolution, smooth);
 }
 
 std::vector<int> WaveformQuantizer::resample_for_ui(const std::vector<float>& high_res_model, int terminal_width) {
@@ -141,7 +175,10 @@ static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm
                                      const std::function<void(const float*, size_t)>& on_chunk) {
     ma_decoder decoder;
     const int channels = pcm.channels >= 2 ? 2 : 1;
-    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, static_cast<ma_uint32>(channels), 44100);
+    // At the rate the buffer was set up with -- the file's own rate (see native_sample_rate()), so nothing is
+    // resampled. If the file turns out to have another rate, the ffmpeg path converts it instead: miniaudio's own
+    // converter is a plain linear one.
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, static_cast<ma_uint32>(channels), 0);
     // ma_decoder_init_file() takes a narrow path, which Windows resolves
     // through the ANSI code page -- so a track whose name contains anything
     // that code page can't express simply fails to open, and every such file
@@ -157,6 +194,10 @@ static bool stream_decode_miniaudio(const fs::path& file_path, StreamingPcm& pcm
 #endif
     if (init_rc != MA_SUCCESS) {
         return false; // let the caller fall back to the ffmpeg path (e.g. Opus, which this can't touch)
+    }
+    if (static_cast<int>(decoder.outputSampleRate) != pcm.sample_rate) {
+        ma_decoder_uninit(&decoder);
+        return false; // another rate than the buffer's: ffmpeg resamples it properly
     }
 
     float buf[4096 * 2]; // 4096 frames, up to 2 channels
@@ -188,8 +229,12 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
     // input. Belt-and-suspenders -- the real fix is the stdin redirect in
     // spawn_capture(), but this makes the intent explicit and costs nothing.
     const int channels = pcm.channels >= 2 ? 2 : 1;
+    // The buffer's rate is the file's own (see native_sample_rate()), so usually nothing is resampled; when it is
+    // (a file above 96 kHz, or an unknown rate), with a long, sharp filter instead of ffmpeg's default one.
+    const std::string sr = std::to_string(pcm.sample_rate);
     std::string cmd = "ffmpeg -nostdin -v error -i " + shell_quote(path_utf8(file_path))
-                     + " -f f32le -ac " + std::to_string(channels) + " -ar 44100 -";
+                     + " -af aresample=" + sr + ":filter_size=64:phase_shift=10:cutoff=0.97"
+                     + " -f f32le -ac " + std::to_string(channels) + " -ar " + sr + " -";
 
     std::unique_ptr<ChildProcess> child = spawn_capture(cmd, /*merge_stderr=*/false);
     if (!child) {
@@ -249,6 +294,215 @@ static void stream_decode_ffmpeg_fallback(const fs::path& file_path, StreamingPc
         pcm.decode_failed.store(true);
     }
     pcm.decode_done.store(true);
+}
+
+// ---- Long tracks: a window of the track at a time (StreamingPcm windowed mode) ------------------------------------
+namespace {
+
+// Reads a track from any frame on, at the buffer's rate and channel count: miniaudio's own decoder when it can
+// (WAV/FLAC/MP3/OGG at the file's own rate; MP3 with a seek table, so seeking is quick), else ffmpeg started at the
+// position (-ss before -i: a quick and sample-accurate seek when decoding).
+class TrackReader {
+public:
+    TrackReader(const fs::path& path, int rate, int channels, bool seekable)
+        : path_(path), rate_(rate), ch_(channels >= 2 ? 2 : 1) {
+        ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, static_cast<ma_uint32>(ch_), 0);
+        if (seekable) cfg.seekPointCount = 4096;
+#if defined(_WIN32)
+        ma_result rc = ma_decoder_init_file_w(path.c_str(), &cfg, &dec_);
+#else
+        ma_result rc = ma_decoder_init_file(path.c_str(), &cfg, &dec_);
+#endif
+        if (rc == MA_SUCCESS) {
+            if (static_cast<int>(dec_.outputSampleRate) == rate_) ma_ok_ = true;
+            else ma_decoder_uninit(&dec_);
+        }
+        if (!ma_ok_) start_ffmpeg(0);
+        else if (seekable) calibrate();
+    }
+    ~TrackReader() { if (ma_ok_) ma_decoder_uninit(&dec_); }
+    TrackReader(const TrackReader&) = delete;
+    TrackReader& operator=(const TrackReader&) = delete;
+
+    bool ok() const { return ma_ok_ || child_ != nullptr; }
+    // exact length in frames when the decoder knows it (0 = unknown)
+    size_t length() {
+        ma_uint64 n = 0;
+        if (ma_ok_ && ma_decoder_get_length_in_pcm_frames(&dec_, &n) == MA_SUCCESS) return static_cast<size_t>(n);
+        return 0;
+    }
+    bool seek(size_t frame) {
+        if (ma_ok_) {
+            // with the offset the seek table is off by (see calibrate); the frames before it are read and dropped
+            const long long at = static_cast<long long>(frame) - seek_off_;
+            if (ma_decoder_seek_to_pcm_frame(&dec_, static_cast<ma_uint64>(std::max(0ll, at))) != MA_SUCCESS) return false;
+            for (long long skip = at < 0 ? -at : 0; skip > 0;) {
+                float tmp[1024 * 2];
+                ma_uint64 got = 0;
+                ma_decoder_read_pcm_frames(&dec_, tmp, static_cast<ma_uint64>(std::min(skip, 1024ll)), &got);
+                if (got == 0) break;
+                skip -= static_cast<long long>(got);
+            }
+            return true;
+        }
+        start_ffmpeg(frame);
+        return child_ != nullptr;
+    }
+    // up to `frames` frames; 0 = the end
+    size_t read(float* out, size_t frames) {
+        if (ma_ok_) {
+            ma_uint64 got = 0;
+            ma_decoder_read_pcm_frames(&dec_, out, frames, &got);
+            return static_cast<size_t>(got);
+        }
+        if (!child_) return 0;
+        const size_t need = frames * static_cast<size_t>(ch_) * sizeof(float);
+        while (pend_.size() < need && !eof_) {
+            char buf[65536];
+            const std::ptrdiff_t n = child_->read(buf, sizeof buf);
+            if (n <= 0) { eof_ = true; break; }
+            pend_.insert(pend_.end(), buf, buf + n);
+        }
+        const size_t frame_bytes = static_cast<size_t>(ch_) * sizeof(float);
+        const size_t take = std::min(need, pend_.size() / frame_bytes * frame_bytes);
+        std::memcpy(out, pend_.data(), take);
+        pend_.erase(pend_.begin(), pend_.begin() + static_cast<long>(take));
+        return take / frame_bytes;
+    }
+
+private:
+    // An MP3 seek through the seek table can land a fixed number of frames off (47 in tests with LAME files: the
+    // decoder's priming frames are counted differently there). Found once by comparing a stretch read straight through
+    // with the same stretch reached by a seek; seek() then corrects it, so a seek lands on the exact frame.
+    void calibrate() {
+        const size_t ch = static_cast<size_t>(ch_);
+        const size_t F = static_cast<size_t>(rate_) * 10, kBack = 1024, kN = 2048;
+        ma_uint64 len = 0;
+        if (ma_decoder_get_length_in_pcm_frames(&dec_, &len) == MA_SUCCESS && len > 0 && len < F + 8192) return;
+        std::vector<float> ref((kBack + kN + kBack) * ch), test(kN * ch), tmp(8192 * ch);
+        size_t pos = 0, filled = 0;
+        while (pos < F + kN + kBack) {   // straight through up to F + kN + kBack, keeping [F - kBack, F + kN + kBack)
+            ma_uint64 got = 0;
+            ma_decoder_read_pcm_frames(&dec_, tmp.data(), 8192, &got);
+            if (got == 0) break;
+            for (size_t i = 0; i < got; ++i, ++pos)
+                if (pos >= F - kBack && pos < F + kN + kBack) { std::copy_n(tmp.data() + i * ch, ch, ref.data() + (pos - (F - kBack)) * ch); ++filled; }
+        }
+        ma_uint64 got = 0;
+        if (filled == ref.size() / ch && ma_decoder_seek_to_pcm_frame(&dec_, F) == MA_SUCCESS) {
+            ma_decoder_read_pcm_frames(&dec_, test.data(), kN, &got);
+            double energy = 0;
+            for (size_t i = 0; i < kN * ch; ++i) energy += static_cast<double>(test[i]) * test[i];
+            if (got == kN && energy > 1e-6) {
+                // the smallest offset with an exact match: test frame i == straight-through frame F + off + i
+                for (long long d = 0; d <= static_cast<long long>(kBack); ++d)
+                    for (long long off : {d, -d}) {
+                        bool same = true;
+                        for (size_t i = 0; i < kN * ch && same; ++i)
+                            same = std::fabs(test[i] - ref[static_cast<size_t>(static_cast<long long>(kBack) + off) * ch + i]) < 1e-6f;
+                        if (same) { seek_off_ = off; d = static_cast<long long>(kBack) + 1; break; }
+                    }
+            }
+        }
+        ma_decoder_seek_to_pcm_frame(&dec_, 0);
+    }
+    long long seek_off_ = 0;
+
+    void start_ffmpeg(size_t frame) {
+        child_.reset();   // closes the pipe: the old ffmpeg ends
+        pend_.clear();
+        eof_ = false;
+        const std::string sr = std::to_string(rate_);
+        char ss[64];
+        std::snprintf(ss, sizeof ss, "%.6f", static_cast<double>(frame) / rate_);
+        std::string cmd = "ffmpeg -nostdin -v error " + std::string(frame > 0 ? std::string("-ss ") + ss + " " : "") +
+                          "-i " + shell_quote(path_utf8(path_)) +
+                          " -af aresample=" + sr + ":filter_size=64:phase_shift=10:cutoff=0.97"
+                          " -f f32le -ac " + std::to_string(ch_) + " -ar " + sr + " -";
+        child_ = spawn_capture(cmd, /*merge_stderr=*/false);
+    }
+    fs::path path_;
+    int rate_, ch_;
+    ma_decoder dec_{};
+    bool ma_ok_ = false;
+    std::unique_ptr<ChildProcess> child_;
+    std::vector<char> pend_;
+    bool eof_ = false;
+};
+
+} // namespace
+
+void stream_decode_windowed(const fs::path& file_path, StreamingPcm& pcm, const std::function<bool()>& abandoned) {
+    TrackReader rd(file_path, pcm.sample_rate, pcm.channels, true);
+    if (!rd.ok()) { pcm.decode_failed.store(true); pcm.decode_done.store(true); return; }
+    if (const size_t len = rd.length()) pcm.total_frames.store(len, std::memory_order_release);
+    const size_t ch = static_cast<size_t>(pcm.channels);
+    std::vector<float> buf(4096 * ch);
+    size_t pos = 0;
+    bool at_end = false;
+    while (!abandoned()) {
+        size_t to;
+        if (pcm.need_seek(to)) {
+            if (!rd.seek(to)) { pcm.decode_failed.store(true); pcm.decode_done.store(true); return; }
+            pcm.reposition(to);
+            pos = to;
+            at_end = false;
+            continue;
+        }
+        if (at_end) { std::this_thread::sleep_for(std::chrono::milliseconds(20)); continue; }   // stays: a seek back may come
+        const size_t n = rd.read(buf.data(), 4096);
+        if (n == 0) {
+            at_end = true;
+            if (pos == 0) { pcm.decode_failed.store(true); pcm.decode_done.store(true); return; }
+            // the real end: from here on the length is exact (an estimate from the header may be off)
+            pcm.total_frames.store(pos, std::memory_order_release);
+            pcm.decode_done.store(true);
+            continue;
+        }
+        if (pcm.write_window(buf.data(), n, abandoned)) pos += n;
+        // else: a seek is due (handled at the top) or nobody wants the track any more
+    }
+}
+
+void analyse_track(const fs::path& file_path, StreamingPcm& pcm, const std::function<bool()>& abandoned) {
+    TrackReader rd(file_path, pcm.sample_rate, pcm.channels, false);
+    if (rd.ok()) {
+        const size_t ch = static_cast<size_t>(pcm.channels);
+        std::vector<float> buf(4096 * ch);
+        size_t total = 0;
+        for (;;) {
+            if (abandoned()) return;
+            const size_t n = rd.read(buf.data(), 4096);
+            if (n == 0) break;
+            pcm.analyse(buf.data(), n);
+            total += n;
+        }
+        pcm.analyse_end();
+        if (total > 0) pcm.total_frames.store(total, std::memory_order_release);   // exact, also before playback gets there
+    }
+    pcm.finalize_loudness();
+    pcm.analysis_done.store(true, std::memory_order_release);
+}
+
+int native_sample_rate(const fs::path& file_path, const std::string& sampling_hint, double duration_sec) {
+    int rate = 0;
+    ma_decoder decoder;
+    ma_decoder_config config = ma_decoder_config_init(ma_format_f32, 0, 0);   // native format: only the header is read
+#if defined(_WIN32)
+    if (ma_decoder_init_file_w(file_path.c_str(), &config, &decoder) == MA_SUCCESS) {
+#else
+    if (ma_decoder_init_file(file_path.c_str(), &config, &decoder) == MA_SUCCESS) {
+#endif
+        rate = static_cast<int>(decoder.outputSampleRate);
+        ma_decoder_uninit(&decoder);
+    }
+    if (rate <= 0) rate = std::atoi(sampling_hint.c_str());   // ffprobe's figure ("48000KHz"), e.g. for Opus
+    if (rate < 8000 || rate > 768000) return 44100;
+    // Above 96 kHz it is brought down to that, which is still far beyond hearing and the scope. (Long tracks keep
+    // their own rate too: they are held a window at a time -- see StreamingPcm's windowed mode.)
+    (void)duration_sec;
+    if (rate > 96000) rate = 96000;
+    return rate;
 }
 
 void stream_decode_ffmpeg(const fs::path& file_path, StreamingPcm& pcm,

@@ -69,6 +69,23 @@ std::optional<SongResult> YoutubeSource::resolve(const std::string& query, std::
 
 std::optional<SongResult> YoutubeSource::resolve_by_id(const std::string& video_id, const std::string& title,
                                                          const std::string& artist, std::string* error_out) {
+    if (video_id.find("://") != std::string::npos) {
+        // SoundCloud / Bandcamp: the id is the track's page URL. The audio is kept as the site delivers it (MP3, Opus,
+        // AAC ...) -- no second lossy conversion -- so the cached file has whatever extension that is.
+        static const char* const kExts[] = {"opus", "mp3", "m4a", "aac", "ogg", "flac", "wav", "webm"};
+        auto find_cached = [&]() -> std::optional<fs::path> {
+            for (const char* e : kExts) if (cache_.is_cached(title, e)) return cache_.path_for(title, e);
+            return std::nullopt;
+        };
+        if (auto hit = find_cached()) return SongResult{title, artist, *hit, true};
+        const fs::path stem = cache_.path_for(title, "opus");
+        std::string cmd = "yt-dlp --no-warnings -x -f bestaudio/best "
+                          "-o " + shell_quote(path_utf8(stem.parent_path() / stem.stem()) + ".%(ext)s") + " " + shell_quote(video_id);
+        ProcResult r = run_capture(cmd, /*merge_stderr=*/true);
+        if (auto got = find_cached()) return SongResult{title, artist, *got, false};
+        if (error_out) *error_out = "yt-dlp download failed:\n" + r.out;
+        return std::nullopt;
+    }
     fs::path cached = cache_.path_for(title, "opus");
     if (cache_.is_cached(title, "opus")) {
         SongResult result{title, artist, cached, true};

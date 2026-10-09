@@ -14,7 +14,7 @@ namespace muisc {
 const char* const kOsciPaletteNames[kOsciPaletteCount] = {"gradient", "settings", "temperature", "aurora", "magma", "ice", "neon", "spectrum"};
 
 namespace {
-const int kFpsSteps[4] = {30, 45, 60, 90};
+const int kFpsSteps[6] = {30, 45, 60, 90, 120, 165};
 const char* const kCellSteps[7] = {"", "8x16", "9x18", "10x20", "12x24", "14x28", "16x32"};
 const char* const kProtoSteps[4] = {"auto", "kitty", "sixel", "off"};
 template <class T, size_t N> int index_of(const T (&arr)[N], const std::string& v, int def) {
@@ -25,9 +25,19 @@ int step_in(int idx, int n, int dir) { return std::clamp(idx + (dir > 0 ? 1 : -1
 std::string lower(std::string s) { for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); return s; }
 }
 
+const char* osci_res_name(int scale) { return scale >= 3 ? "third" : scale == 2 ? "half" : "full"; }
+int osci_res_parse(const std::string& v, int def) {
+    std::string l = v;
+    for (char& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (l == "full" || l == "1") return 1;
+    if (l == "half" || l == "2") return 2;
+    if (l == "third" || l == "3") return 3;
+    return def;
+}
+
 std::vector<int> osci_visible_rows(const Settings& s) {
-    std::vector<int> r = {kOrDisplay, kOrStyle, kOrFps};
-    if (s.osci_style == 1) { r.push_back(kOrProtocol); }
+    std::vector<int> r = {kOrMusic, kOrStyle, kOrFps};   // no "Display" row: what is shown is the "." key's job
+    if (s.osci_style == 1) { r.push_back(kOrProtocol); r.push_back(kOrRes); }
     r.push_back(kOrDecay);
     if (s.osci_style != 1) r.push_back(kOrDot);
     r.push_back(kOrTail);
@@ -39,7 +49,7 @@ std::vector<int> osci_visible_rows(const Settings& s) {
 std::string osci_row_label(int row) {
     static const char* const L[kOsciRowCount] = {"Decay", "Dot threshold", "Tail", "Line/Vec. Interpol.", "Z-Axis (XYZ Mode)",
         "Z Depth", "Z Source", "Trace Length", "Rotate 45 deg (M/S)", "Mono Phase Portrait", "Color", "Glow",
-        "Osci style", "Osci cell pixels", "Image protocol", "Frame rate", "Display"};
+        "Osci style", "Osci cell pixels", "Image protocol", "Frame rate", "Display", "Image resolution", "Osci music mode"};
     return row >= 0 && row < kOsciRowCount ? L[row] : "";
 }
 
@@ -58,14 +68,16 @@ std::string osci_row_value(const Settings& s, int row) {
         case kOrZSource: return o.z_source == 1 ? "level" : "speed";
         case kOrTrace: return std::to_string(o.trace);
         case kOrRotate: return on(o.rotate);
-        case kOrMono: return on(o.mono_phase);
+        case kOrMono: return o.music ? std::string("off (music mode)") : on(o.mono_phase);
         case kOrPalette: return kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)];
         case kOrGlow: return f2(o.glow);
         case kOrStyle: return s.osci_style == 1 ? "image" : "braille";
         case kOrCells: return s.cell_pixels.empty() ? "auto" : s.cell_pixels;
         case kOrProtocol: return s.gfx_protocol;
-        case kOrFps: return std::to_string(s.frame_rate) + " fps";
-        case kOrDisplay: return s.lyric_viz == 1 ? "osci" : "sphere";
+        case kOrFps: return std::to_string(o.frame_rate) + " fps";
+        case kOrRes: return osci_res_name(s.image_scale);
+        case kOrMusic: return on(o.music);
+        case kOrDisplay: return s.lyric_viz == 1 ? "osci" : s.lyric_viz == 2 ? "spectro" : "sphere";
     }
     return "";
 }
@@ -89,18 +101,22 @@ void osci_adjust(Settings& s, int row, int dir) {
         case kOrStyle: s.osci_style = dir > 0 ? 1 : 0; break;
         case kOrCells: s.cell_pixels = kCellSteps[step_in(index_of(kCellSteps, s.cell_pixels, 0), 7, dir)]; break;
         case kOrProtocol: s.gfx_protocol = kProtoSteps[step_in(index_of(kProtoSteps, s.gfx_protocol, 0), 4, dir)]; break;
+        case kOrMusic: o.music = dir > 0; break;
+        case kOrRes: s.image_scale = std::clamp(s.image_scale + (dir > 0 ? -1 : 1), 1, 3); break;   // right = sharper
         case kOrFps: {
             int i = 0;
-            for (int k = 0; k < 4; ++k) if (kFpsSteps[k] == s.frame_rate) i = k;
-            s.frame_rate = kFpsSteps[step_in(i, 4, dir)];
+            for (int k = 0; k < 6; ++k) if (kFpsSteps[k] == o.frame_rate) i = k;
+            o.frame_rate = kFpsSteps[step_in(i, 6, dir)];
             break;
         }
-        case kOrDisplay: s.lyric_viz = dir > 0 ? 0 : 1; break;
+        case kOrDisplay: s.lyric_viz = (s.lyric_viz + (dir > 0 ? 1 : 2)) % 3; break;   // sphere -> osci -> spectro
     }
 }
 
-void osci_reset(Settings& s) {   // the parameters of the style in use; the shared rows (style, protocol, cells, fps, display) stay
+void osci_reset(Settings& s) {   // the parameters of the style in use; the shared rows (style, protocol, cells) and its fps stay
+    const int fps = s.osci().frame_rate;
     s.osci() = OsciSet{};
+    s.osci().frame_rate = fps;
     if (s.osci_style == 1) s.osci().glow = 0.60f;
 }
 
@@ -117,6 +133,7 @@ float as_float(const std::string& v, float def, float lo, float hi) {
 int as_int(const std::string& v, int def, int lo, int hi) {
     try { return std::clamp(std::stoi(v), lo, hi); } catch (...) { return def; }
 }
+int fps_snap(int fr) { return fr >= 143 ? 165 : fr >= 105 ? 120 : fr >= 75 ? 90 : fr >= 52 ? 60 : fr >= 38 ? 45 : 30; }
 }
 
 bool osci_config_key(Settings& s, const std::string& key, const std::string& value) {
@@ -138,12 +155,21 @@ bool osci_config_key(Settings& s, const std::string& key, const std::string& val
         else if (n == "MonoPhase") o.mono_phase = as_bool(value, o.mono_phase);
         else if (n == "Glow") o.glow = as_float(value, o.glow, 0.0f, 1.0f);
         else if (n == "Palette") { const std::string l = lower(value); for (int i = 0; i < kOsciPaletteCount; ++i) if (l == kOsciPaletteNames[i]) o.palette = i; }
+        // frame rate and music mode per style; the braille line (written first) also sets the image style, so a config
+        // from before (one value for both) gives both styles that value -- the image line that follows overrides it
+        else if (n == "FrameRate") { const int fr = fps_snap(as_int(value, o.frame_rate, 30, 165)); o.frame_rate = fr; if (st == 0) s.osci_set[1].frame_rate = fr; }
+        else if (n == "MusicMode") { o.music = as_bool(value, o.music); if (st == 0) s.osci_set[1].music = o.music; }
         else continue;
         return true;
     }
     if (key == "OsciStyle") { s.osci_style = lower(value) == "image" ? 1 : 0; return true; }
     if (key == "OsciImageProtocol") { s.gfx_protocol = lower(value); return true; }
-    if (key == "FrameRate") { const int fr = as_int(value, s.frame_rate, 30, 90); s.frame_rate = fr >= 75 ? 90 : fr >= 52 ? 60 : fr >= 38 ? 45 : 30; return true; }
+    if (key == "OsciImageResolution") { s.image_scale = osci_res_parse(value, s.image_scale); return true; }
+    if (key == "FrameRate") {   // up to v3.1 one value for both styles
+        const int fr = fps_snap(as_int(value, 30, 30, 165));
+        s.osci_set[0].frame_rate = s.osci_set[1].frame_rate = fr;
+        return true;
+    }
     return false;
 }
 
@@ -157,20 +183,24 @@ void osci_config_write(std::ostream& out, const Settings& s) {
             << P << "ZSource=" << (o.z_source == 1 ? "level" : "speed") << "\n" << P << "TraceLength=" << o.trace << "\n"
             << P << "Rotate=" << b(o.rotate) << "\n" << P << "MonoPhase=" << b(o.mono_phase) << "\n"
             << P << "Palette=" << kOsciPaletteNames[std::clamp(o.palette, 0, kOsciPaletteCount - 1)] << "\n"
-            << P << "Glow=" << num(o.glow) << "\n";
+            << P << "Glow=" << num(o.glow) << "\n" << P << "FrameRate=" << o.frame_rate << "\n"
+            << P << "MusicMode=" << b(o.music) << "\n";
     };
     out << "## Oscilloscope (SHIFT+o overlay), one block per style: braille = Osci<name>, image = OsciImage<name>. Each style keeps its own values.\n";
     out << "## Decay = afterglow 0.00-0.99 | DotThreshold 0.01-1.00 (braille: lower = thicker line) | TailBrightness 0.00-1.00 | Interpolation = connect the\n";
     out << "## samples with lines | ZAxis = beam intensity (ZDepth 0-1, ZSource speed|level) | TraceLength 128-1024 samples | Rotate = 45 degrees (mid vertical) |\n";
-    out << "## MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom)\n";
+    out << "## MonoPhase = phase portrait for near-mono signals | Palette gradient|settings|temperature|aurora|magma|ice|neon|spectrum | Glow 0-1 (image bloom) |\n";
+    out << "## FrameRate = screen refresh while that style is in use: 30 | 45 | 60 | 90 | 120 | 165 | MusicMode = oscilloscope music mode (the scopes\n";
+    out << "## get the decoded signal itself, no EQ / normalization / volume, at a fixed scale and without the phase portrait)\n";
     block("Osci", s.osci_set[0]);
     block("OsciImage", s.osci_set[1]);
     out << "## braille | image (a real pixel picture drawn by the terminal: Kitty graphics or Sixel; braille where there is neither)\n";
     out << "OsciStyle=" << (s.osci_style == 1 ? "image" : "braille") << "\n";
     out << "## image style: auto | kitty | sixel | off, and the pixels of one terminal cell (WxH, empty = ask the terminal)\n";
     out << "OsciImageProtocol=" << s.gfx_protocol << "\n";
-    out << "## screen refresh: 30 | 45 | 60 | 90 frames per second (higher = more CPU and, for the image, more data for the terminal)\n";
-    out << "FrameRate=" << s.frame_rate << "\n";
+    out << "## image style: full | half | third of the screen resolution (lower = less work and data per frame, a softer and wider beam)\n";
+    out << "OsciImageResolution=" << osci_res_name(s.image_scale) << "\n";
+
 }
 
 } // namespace muisc

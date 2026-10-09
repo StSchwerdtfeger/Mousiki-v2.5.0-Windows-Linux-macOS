@@ -1,9 +1,12 @@
 #include "player.h"
+#include "scope_window.h"
+#include "spectrogram.h"
 #include "audio_backend.h"
 #include "console_log.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <thread>
 
@@ -90,31 +93,52 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     // Acquire-load: pairs with the release-store in StreamingPcm::append(),
     // guaranteeing every frame below `avail` was fully written by the
     // decode thread before we read it here.
-    size_t avail = pcm.available.load(std::memory_order_acquire);
+    // Windowed buffer (long tracks): only [lo, avail) is held, frame k at ring slot pcm.slot(k).
+    size_t lo = 0, avail = 0;
+    pcm.readable(lo, avail);
     const float* src = pcm.data.data();
+    const bool windowed = pcm.windowed;
+    if (windowed) pcm.play_pos.store(cur, std::memory_order_relaxed);
 
     const bool feed_fft = self->fft_sink_ && self->fft_mono_.size() >= frame_count;
     float* mono_out = feed_fft ? self->fft_mono_.data() : nullptr;
+    // Oscilloscope music mode: the scopes get the decoded signal itself -- before the mono fold, the equalizer, the
+    // normalization, the limiter and the volume -- so figures keep their exact shape and size.
+    // The spectrogram analyses the decoded signal too (like Audacity analyses the file), whatever the mode.
+    const bool raw_scope = self->scope_raw_on_.load(std::memory_order_relaxed);
+    const bool raw_spectro = spectro_feed_active() || spectro_window_feed_active();   // terminal and / or window
+    float* raw_out = (raw_scope || raw_spectro) && self->scope_raw_.size() >= 2 * static_cast<size_t>(frame_count) ? self->scope_raw_.data() : nullptr;
 
+    // Windowed: the position only moves on over frames that are actually there (after a seek the decoder needs a
+    // moment to get there: that moment is a short silence, not a skipped stretch of the track).
+    long long played = 0;
+    bool gap = false;
     for (ma_uint32 i = 0; i < frame_count; ++i) {
-        long long idx = cur + static_cast<long long>(i);
+        long long idx = cur + played;
+        if (!windowed) idx = cur + static_cast<long long>(i);
         norm_cur += (norm_target - norm_cur) * norm_alpha;
         float l = 0.0f, r = 0.0f;
-        if (idx >= 0 && static_cast<size_t>(idx) < avail) {
-            const size_t k = static_cast<size_t>(idx);
+        if (raw_out) raw_out[2 * i] = raw_out[2 * i + 1] = 0.0f;
+        if (!gap && idx >= 0 && static_cast<size_t>(idx) >= lo && static_cast<size_t>(idx) < avail) {
+            ++played;
+            const size_t k = pcm.slot(static_cast<size_t>(idx));   // sample index of channel 0
+            if (raw_out) {
+                raw_out[2 * i] = src[k];
+                raw_out[2 * i + 1] = pcm_ch == 1 ? src[k] : src[k + 1];
+            }
             if (pcm_ch == 1) {
                 l = r = src[k];
             } else if (play_stereo) {
-                l = src[2 * k];
-                r = src[2 * k + 1];
+                l = src[k];
+                r = src[k + 1];
             } else {
-                l = r = 0.5f * (src[2 * k] + src[2 * k + 1]);
+                l = r = 0.5f * (src[k] + src[k + 1]);
             }
             if (eq_run) self->eq_.process(l, r); // before volume/normalisation: tone shaping on the raw signal
             const float g = norm_cur * gain;
             l *= g;
             r *= g;
-        }
+        } else if (windowed) gap = true;
         if (norm_on || norm_cur > 1.001f || eq_run) { l = soft_limit(l); r = soft_limit(r); }
         out[2 * i]     = l;
         out[2 * i + 1] = r;
@@ -135,9 +159,23 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
     // above -- this never allocates on the audio thread. While paused the
     // callback returns before any of this runs, which freezes the scope on
     // the last drawn waveform, exactly like the frozen spectrum bars.
-    if (self->scope_sink_) self->scope_sink_->push_frames(out, frame_count);
+    const float* scope_src = raw_out && raw_scope ? raw_out : out;
+    if (raw_out && raw_spectro) {
+        spectro_feed_push(raw_out, frame_count, self->sample_rate_.load());
+        spectro_window_feed_push(raw_out, frame_count, self->sample_rate_.load());   // the spectrogram window (SHIFT+8)
+    }
+    if (self->scope_sink_) self->scope_sink_->push_frames(scope_src, frame_count);
+    scope_feed_push(scope_src, frame_count, self->sample_rate_.load());   // the scope window (SHIFT+9); nothing while it is closed
 
     long long new_cur = cur + static_cast<long long>(frame_count);
+    if (windowed) {
+        new_cur = cur + played;
+        const size_t total = pcm.total_frames.load(std::memory_order_acquire);
+        if (total > 0 && new_cur >= 0 && static_cast<size_t>(new_cur) >= total) {
+            new_cur = static_cast<long long>(total);
+            self->finished_.store(true);
+        } else if (pcm.decode_failed.load()) self->finished_.store(true);
+    } else
     // Only truly "finished" once decode is done AND playback has caught
     // all the way up to everything it ever produced — not just the
     // current available count, which may still be growing while we play.
@@ -145,7 +183,8 @@ void Player::data_callback(ma_device* device, void* output, const void* /*input*
         new_cur >= 0 && static_cast<size_t>(new_cur) >= pcm.available.load(std::memory_order_acquire)) {
         self->finished_.store(true);
     }
-    self->cursor_frames_.store(new_cur);
+    // a seek (seek_relative) while this block was being made wins over the position this block reached
+    self->cursor_frames_.compare_exchange_strong(cur, new_cur);
 }
 
 bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volume_pct,
@@ -170,6 +209,11 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     if (!pcm) return false;
 
     if (!context_ready_) {
+        const char* use_null = std::getenv("MOUSIKI_NULL_AUDIO");   // headless runs (tests, CI): a silent device
+        if (use_null && *use_null == '1') {
+            ma_backend nb[] = { ma_backend_null };
+            context_ready_ = ma_context_init(nb, 1, nullptr, &context_) == MA_SUCCESS;
+        } else
         context_ready_ = init_platform_audio_context(context_);
         // Not fatal if this fails — ma_device_init(nullptr, ...) below
         // falls back to miniaudio's own default backend selection.
@@ -179,6 +223,7 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     fft_sink_ = fft_sink;
     scope_sink_ = scope_sink;
     fft_mono_.assign(16384, 0.0f); // > any realistic device period (16384 frames = 370 ms at 44.1 kHz)
+    scope_raw_.assign(2 * 16384, 0.0f);
     sample_rate_.store(pcm_->sample_rate > 0 ? pcm_->sample_rate : 44100);
     volume_pct_.store(std::clamp(volume_pct, 0, 100));
     gain_.store(volume_pct_.load() / 100.0f);
@@ -191,11 +236,15 @@ bool Player::play(std::shared_ptr<StreamingPcm> pcm, double start_sec, int volum
     track_lufs_.store(std::numeric_limits<float>::quiet_NaN());
     norm_gain_db_.store(0.0f);
     cursor_frames_.store(static_cast<long long>(std::max(0.0, start_sec) * sample_rate_.load()));
+    if (pcm_->windowed) pcm_->play_pos.store(cursor_frames_.load(), std::memory_order_relaxed);
 
     ma_device_config cfg = ma_device_config_init(ma_device_type_playback);
     cfg.playback.format = ma_format_f32;
     cfg.playback.channels = 2; // always stereo; mono buffers are duplicated in the callback
     cfg.sampleRate = static_cast<ma_uint32>(sample_rate_.load());
+    // If the device cannot take the track's rate, miniaudio converts it: with the steepest low-pass it offers instead
+    // of the default (order 4), so no aliasing and no dull top end. (WASAPI shared mode uses Windows' own converter.)
+    cfg.resampling.linear.lpfOrder = MA_MAX_FILTER_ORDER;
     cfg.dataCallback = data_callback;
     cfg.pUserData = this;
 
@@ -243,9 +292,10 @@ void Player::seek_relative(double delta_sec) {
     // Clamp against reserved capacity (the eventual max), not the
     // currently-decoded amount — seeking a bit ahead of what's decoded
     // so far is fine, it just plays silence until decode catches up.
-    long long cap = static_cast<long long>(pcm_->capacity_frames());
+    long long cap = static_cast<long long>(pcm_->seek_limit_frames());
     long long next = std::clamp<long long>(cur + delta_frames, 0, cap);
     cursor_frames_.store(next);
+    if (pcm_->windowed) pcm_->play_pos.store(next, std::memory_order_relaxed);   // the decoder moves there now, even while paused
     if (next < cap) finished_.store(false);
 }
 

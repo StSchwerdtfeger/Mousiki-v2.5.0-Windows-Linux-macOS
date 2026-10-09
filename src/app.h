@@ -34,7 +34,7 @@
 
 namespace muisc {
 
-enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, NormMenu, Equalizer, SleepTimer, LyricsEdit, Karaoke };
+enum class Mode { Browse, Search, Settings, ColorEdit, Console, Cheatsheet, BulkAdd, RetryLyrics, Playlist, MetaEdit, History, ClearQueue, OsciMenu, NormMenu, Equalizer, SleepTimer, LyricsEdit, Karaoke, SpectroMenu };
 enum class ListSource { Local, Online, Playlist, Folder };
 
 // One row of the main UI's "/f:" folder list: a folder that directly
@@ -202,6 +202,7 @@ private:
     std::vector<QueueItem> queue_;
     int queue_selected_ = 0;   // cursor/"hovering" row, only meaningful once queue_focus_ has been used
     int queue_scroll_ = 0;
+    bool search_nav_moved_ = false;   // Up/Down used in the search box: ENTER then plays the highlighted entry
     bool queue_focus_ = false; // Tab toggles which panel Up/Down navigates
 
     // "!" (HKeyQueueLock): a LOCKED queue (the default) keeps its tracks when
@@ -506,6 +507,11 @@ private:
     mutable int gfx_last_crop_ = -1;
     mutable int cell_w_ = 9, cell_h_ = 18;
     bool gfx_due_ = true;
+    // The "fetching lyrics ..." box laid over the bottom row of the lyrics area's visual this frame (0-based row, col,
+    // width; width 0 = none) and its text with colours: the image styles keep these cells free / write it again on top.
+    mutable int caption_rect_[3] = {0, 0, 0};
+    mutable std::string caption_text_;
+    static std::string overlay_cells(const std::string& line, int x, const std::string& text, int text_w, int line_w);
     mutable int float_rect_[4] = {0, 0, 0, 0}; // x, y, w, h of the floating panel drawn this frame (0-based cells)
 
     // --- local list marquee (hovered row's title, when too long to fit) ---
@@ -806,7 +812,8 @@ private:
     std::atomic<bool> search_ready_{false};
     std::atomic<bool> search_in_progress_{false};
     std::vector<OnlineResult> pending_search_results_;
-    void launch_search_async(const std::string& query);
+    void launch_search_async(const std::string& query, int source = 0);   // 0 YouTube, 1 SoundCloud, 2 Bandcamp
+    int last_online_source_ = 0;   // the source of the last online search (the search box shows /s:, /sc: or /b:)
     void poll_pending_search();
 
     // --- settings panel (6 tabs: Colors, On/Off, Animation, Paths, Reference, About App) ---
@@ -1032,6 +1039,29 @@ private:
     // Up/Down pick a row, Left/Right change it, R resets, ESC / Shift+O close
     // (and save the values to config.txt).
     int osci_menu_row_ = 0;
+    // Shift+9 (HKeyScopeWindow): the oscilloscope in its own window (src/scope_window.h). scope_window_sync() runs
+    // every frame: it sends the current scope settings / colours / title and notices a window closed from its side.
+    bool scope_win_on_ = false;
+    // Spectrogram (src/spectrogram.h): the third lyrics-area visual (LyricViz=spectro), SHIFT+i options overlay
+    // (Mode::SpectroMenu), SHIFT+u full screen. spectro_area_ = where this frame put the picture (row, col, cols, rows,
+    // 0-based; row -1 = no picture), spectro_used_ = a spectrogram was drawn this frame (else the feed is switched off).
+    mutable bool spectro_used_ = false;
+    mutable int spectro_area_[4] = {-1, 0, 0, 0};
+    SpectroGfx spectro_gfx_;
+    bool spectro_full_ = false;
+    int spectro_menu_row_ = 0;
+    static constexpr int kSpectroMenuPanelWidth = 52;
+    std::vector<std::string> build_spectro_menu_panel() const;
+    std::string build_spectro_full(int W, const char* clear_prefix) const;
+    void spectro_menu_adjust(int dir);
+    size_t frame_main_len_ = std::string::npos;   // render_frame(): end of the main screen's lines (the overlays follow)
+    void scope_window_toggle();
+    void scope_window_sync(bool check_alive = true);
+    // SHIFT+8 (HKeySpectroWindow): the spectrogram in its own window, the same way as the scope window.
+    bool spectro_win_on_ = false;
+    void spectro_window_toggle();
+    void spectro_window_sync(bool check_alive = true);
+    void enforce_visual_switches();
     static constexpr int kOsciMenuPanelWidth = 50; // just wide enough for the key legend
     std::vector<std::string> build_osci_menu_panel() const;
     void osci_menu_adjust(int dir);

@@ -1,0 +1,625 @@
+// The scope window process (`mousiki --scope-window`): reads samples and settings from its standard input (sent by
+// scope_window.cpp) and draws them as an analog XY oscilloscope with the graphics card (SDL2's renderer: Direct3D 11 on
+// Windows, OpenGL on Linux, Metal on macOS -- integrated graphics are plenty).
+//
+// How it draws, every frame (at the monitor's refresh rate):
+//   1. Phosphor: an off-screen picture keeps the beam. It is darkened in steps of 1/60 s by the Decay setting, plus one
+//      level per step so faint rests vanish instead of staying stuck in 8-bit colour.
+//   2. Beam: every sample that arrived since the last frame is drawn once, as a soft line from the previous sample
+//      (a quad with a Gaussian cross-section, added to what is there) -- dense parts of the trace add up and glow.
+//   3. Bloom: the picture is shrunk to 1/2, 1/4 and 1/8 with smooth filtering and the two smallest are added on top.
+// The playhead runs on the window's own clock at the sample rate, ~35 ms behind the newest sample, so bursts in the pipe
+// never show as jerks.
+#include "scope_window.h"
+#include "scope_sdl.h"
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <vector>
+
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
+namespace muisc {
+
+namespace {
+
+constexpr size_t kRing = 1u << 17;   // samples kept (~2.7 s at 48 kHz)
+
+struct Shared {
+    std::mutex m;
+    std::vector<float> ring = std::vector<float>(2 * kRing, 0.0f);
+    uint64_t total = 0;              // samples received so far
+    ScopeWinConfig cfg;
+    unsigned cfg_gen = 0;
+    std::atomic<bool> eof{false};
+};
+
+std::string home_dir() {
+    const char* h = std::getenv("HOME");
+#if defined(_WIN32)
+    if (!h || !*h) h = std::getenv("USERPROFILE");
+#endif
+    return h && *h ? h : ".";
+}
+
+void write_error(const std::string& msg) {
+    std::error_code ec;
+    const std::filesystem::path dir = std::filesystem::path(home_dir()) / ".cache" / "mousiki";
+    std::filesystem::create_directories(dir, ec);
+    std::ofstream(dir / "scope_window_error.txt") << msg << "\n";
+}
+
+bool read_exact(void* buf, size_t n) {
+    char* p = static_cast<char*>(buf);
+    while (n > 0) {
+        const size_t got = std::fread(p, 1, n, stdin);
+        if (got == 0) return false;
+        p += got;
+        n -= got;
+    }
+    return true;
+}
+
+// Reads packets until the input ends (the player closed the window or quit).
+void reader_main(Shared* S) {
+    std::vector<char> payload;
+    for (;;) {
+        uint8_t head[5];
+        if (!read_exact(head, sizeof head)) break;
+        const uint32_t len = static_cast<uint32_t>(head[1]) | (static_cast<uint32_t>(head[2]) << 8) |
+                             (static_cast<uint32_t>(head[3]) << 16) | (static_cast<uint32_t>(head[4]) << 24);
+        if (len > (64u << 20)) break;   // nonsense: stop rather than allocate
+        payload.resize(len);
+        if (len > 0 && !read_exact(payload.data(), len)) break;
+        if (head[0] == 1 && len == sizeof(ScopeWinConfig)) {
+            ScopeWinConfig c;
+            std::memcpy(&c, payload.data(), sizeof c);
+            if (c.magic != ScopeWinConfig{}.magic) continue;
+            std::lock_guard<std::mutex> lk(S->m);
+            S->cfg = c;
+            ++S->cfg_gen;
+        } else if (head[0] == 2) {
+            const size_t n = len / (2 * sizeof(float));
+            const float* f = reinterpret_cast<const float*>(payload.data());
+            std::lock_guard<std::mutex> lk(S->m);
+            for (size_t i = 0; i < n; ++i) {
+                const size_t at = static_cast<size_t>((S->total + i) & (kRing - 1));
+                S->ring[2 * at] = f[2 * i];
+                S->ring[2 * at + 1] = f[2 * i + 1];
+            }
+            S->total += n;
+        }
+    }
+    S->eof.store(true);
+}
+
+// ---- window position and size, kept between runs ----------------------------------------------------------------------
+struct Geometry { int x = sdl::kPosCentered, y = sdl::kPosCentered, w = 720, h = 720; bool full = false, top = false; };
+
+std::filesystem::path geometry_file() { return std::filesystem::path(home_dir()) / ".config" / "mousiki" / "scope_window.txt"; }
+
+Geometry load_geometry(const sdl::Api& A) {
+    Geometry g;
+    std::ifstream in(geometry_file());
+    int x, y, w, h, f, t;
+    if (in >> x >> y >> w >> h >> f >> t) {
+        g.w = std::clamp(w, 160, 8192);
+        g.h = std::clamp(h, 120, 8192);
+        g.full = f != 0;
+        g.top = t != 0;
+        // only where a screen still is (a monitor may have gone since)
+        const int n = A.GetNumVideoDisplays();
+        for (int i = 0; i < n; ++i) {
+            sdl::Rect r{};
+            if (A.GetDisplayBounds(i, &r) != 0) continue;
+            const int mx = x + g.w / 2, my = y + 16;
+            if (mx >= r.x && mx < r.x + r.w && my >= r.y && my < r.y + r.h) { g.x = x; g.y = y; break; }
+        }
+    }
+    return g;
+}
+
+void save_geometry(const Geometry& g) {
+    std::error_code ec;
+    std::filesystem::create_directories(geometry_file().parent_path(), ec);
+    std::ofstream(geometry_file()) << g.x << " " << g.y << " " << g.w << " " << g.h << " " << (g.full ? 1 : 0) << " " << (g.top ? 1 : 0) << "\n";
+}
+
+// ---- drawing -------------------------------------------------------------------------------------------------------
+struct Gpu {
+    sdl::Texture* accum = nullptr;      // the phosphor
+    sdl::Texture* half = nullptr;
+    sdl::Texture* quarter = nullptr;
+    sdl::Texture* eighth = nullptr;
+    sdl::Texture* beam = nullptr;       // 64 x 64 soft dot: the cross-section of the beam
+    int w = 0, h = 0;
+};
+
+void destroy(const sdl::Api& A, Gpu& g) {
+    for (sdl::Texture** t : {&g.accum, &g.half, &g.quarter, &g.eighth, &g.beam})
+        if (*t) { A.DestroyTexture(*t); *t = nullptr; }
+}
+
+bool create(const sdl::Api& A, sdl::Renderer* R, Gpu& g, int w, int h) {
+    destroy(A, g);
+    g.w = std::max(1, w);
+    g.h = std::max(1, h);
+    auto target = [&](int tw, int th) {
+        sdl::Texture* t = A.CreateTexture(R, sdl::kFmtARGB8888, sdl::kTexTarget, std::max(1, tw), std::max(1, th));
+        if (t && A.SetTextureScaleMode) A.SetTextureScaleMode(t, sdl::kScaleLinear);
+        return t;
+    };
+    g.accum = target(g.w, g.h);
+    g.half = target(g.w / 2, g.h / 2);
+    g.quarter = target(g.w / 4, g.h / 4);
+    g.eighth = target(g.w / 8, g.h / 8);
+    std::vector<uint32_t> px(64 * 64);
+    for (int y = 0; y < 64; ++y)
+        for (int x = 0; x < 64; ++x) {
+            const float dx = (x + 0.5f - 32.0f) / 32.0f, dy = (y + 0.5f - 32.0f) / 32.0f;
+            const float d2 = dx * dx + dy * dy;
+            const float a = d2 >= 1.0f ? 0.0f : std::exp(-d2 * 4.0f) * (1.0f - d2);   // Gaussian, reaching 0 at the rim
+            px[static_cast<size_t>(y) * 64 + x] = (static_cast<uint32_t>(std::lround(a * 255.0f)) << 24) | 0x00FFFFFFu;
+        }
+    g.beam = A.CreateTexture(R, sdl::kFmtARGB8888, sdl::kTexStatic, 64, 64);
+    if (g.beam) {
+        A.UpdateTexture(g.beam, nullptr, px.data(), 64 * 4);
+        A.SetTextureBlendMode(g.beam, sdl::kBlendAdd);
+        if (A.SetTextureScaleMode) A.SetTextureScaleMode(g.beam, sdl::kScaleLinear);
+    }
+    if (!g.accum || !g.half || !g.quarter || !g.eighth || !g.beam) return false;
+    A.SetRenderTarget(R, g.accum);
+    A.SetRenderDrawColor(R, 0, 0, 0, 255);
+    A.RenderClear(R);
+    A.SetRenderTarget(R, nullptr);
+    return true;
+}
+
+void write_ppm(const std::string& path, const std::vector<uint32_t>& px, int w, int h) {
+    std::ofstream o(path, std::ios::binary);
+    o << "P6\n" << w << " " << h << "\n255\n";
+    for (uint32_t v : px) { const char c[3] = {static_cast<char>(v >> 16), static_cast<char>(v >> 8), static_cast<char>(v)}; o.write(c, 3); }
+}
+
+// Mono detection, as in the terminal scope: side / mid energy below kMonoFull = phase portrait, above kMonoNone = XY.
+constexpr float kMonoFull = 0.003f, kMonoNone = 0.020f;
+constexpr int kDeriv = 3;
+constexpr int kLz = 3;   // Lanczos-3: 6 samples per interpolated point
+
+} // namespace
+
+int scope_window_main() {
+#if defined(_WIN32)
+    _setmode(_fileno(stdin), _O_BINARY);
+#endif
+    // On the heap and never freed: the reader thread may still sit in fread() while the window shuts down.
+    Shared& S = *new Shared;
+    std::thread(reader_main, &S).detach();   // blocked in fread until the input ends; the process exit ends it
+
+    sdl::Api A;
+    std::string err;
+    if (!sdl::load(A, &err)) { write_error(err); return 2; }
+    A.SetHint("SDL_WINDOWS_DPI_AWARENESS", "permonitorv2");
+    A.SetHint("SDL_VIDEO_X11_NET_WM_BYPASS_COMPOSITOR", "0");
+    A.SetHint("SDL_RENDER_SCALE_QUALITY", "1");
+    A.SetHint("SDL_RENDER_BATCHING", "1");
+#if defined(_WIN32)
+    A.SetHint("SDL_RENDER_DRIVER", "direct3d11");
+#endif
+    if (A.Init(sdl::kInitVideo) != 0) { write_error(std::string("scope window: SDL could not start the video system: ") + A.GetError()); return 3; }
+
+    Geometry geo = load_geometry(A);
+    sdl::Window* win = A.CreateWin("Mousiki scope", geo.x, geo.y, geo.w, geo.h, sdl::kWinResizable | sdl::kWinHighDpi | sdl::kWinShown);
+    if (!win) { write_error(std::string("scope window: cannot open a window: ") + A.GetError()); A.Quit(); return 4; }
+    sdl::Renderer* R = A.CreateRenderer(win, -1, sdl::kRenAccelerated | sdl::kRenVsync | sdl::kRenTarget);
+    if (!R) {   // the preferred driver did not work: let SDL pick any
+        A.SetHint("SDL_RENDER_DRIVER", "");
+        R = A.CreateRenderer(win, -1, sdl::kRenAccelerated | sdl::kRenVsync | sdl::kRenTarget);
+    }
+    if (!R) R = A.CreateRenderer(win, -1, sdl::kRenVsync | sdl::kRenTarget);   // software, slow but working
+    if (!R) { write_error(std::string("scope window: no usable renderer: ") + A.GetError()); A.DestroyWindow(win); A.Quit(); return 5; }
+    if (geo.full) A.SetWindowFullscreen(win, sdl::kWinFullscreenDesktop);
+    if (geo.top && A.SetWindowAlwaysOnTop) A.SetWindowAlwaysOnTop(win, 1);
+
+    // "dst - src": takes the faint rests off the phosphor (not every renderer has it; then only the decay works)
+    const int sub_blend = A.ComposeCustomBlendMode(sdl::kFactorOne, sdl::kFactorOne, sdl::kOpRevSubtract,
+                                                   sdl::kFactorOne, sdl::kFactorOne, sdl::kOpRevSubtract);
+    const bool sub_ok = A.SetRenderDrawBlendMode(R, sub_blend) == 0;
+    A.SetRenderDrawBlendMode(R, sdl::kBlendNone);
+
+    Gpu gpu;
+    int ow = 0, oh = 0;
+    A.GetRendererOutputSize(R, &ow, &oh);
+    if (!create(A, R, gpu, ow, oh)) { write_error(std::string("scope window: cannot create textures: ") + A.GetError()); destroy(A, gpu); A.DestroyRenderer(R); A.DestroyWindow(win); A.Quit(); return 6; }
+
+    const char* shot_path = std::getenv("MOUSIKI_SCOPE_SHOT");   // tests: save frame N as a PPM picture
+    const int shot_frame = std::getenv("MOUSIKI_SCOPE_SHOT_FRAME") ? std::atoi(std::getenv("MOUSIKI_SCOPE_SHOT_FRAME")) : 120;
+    const bool shot_exit = std::getenv("MOUSIKI_SCOPE_SHOT_EXIT") != nullptr;
+
+    ScopeWinConfig cfg;
+    unsigned cfg_seen = ~0u;
+    std::string title_set;
+    std::vector<float> xs, ys, mids, rx, ry, lz_w;
+    int lz_ups = 0;
+    std::vector<sdl::Vertex> verts;
+    std::vector<int> idx;
+    float mid_hist[2 * kDeriv] = {};
+    double play = 0.0;
+    uint64_t drawn = 0;
+    bool started = false;
+    float peak = 0.05f, mono = 0.0f, pscale = 0.0f, spd_lo = -3.0f, spd_hi = -1.5f;
+    float last_x = 0.0f, last_y = 0.0f;
+    bool have_last = false;
+    double decay_acc = 0.0;
+    // Exposure: a coarse copy of the phosphor on the CPU (beam length per cell, decaying like the picture) tells how
+    // often the beam crosses the same spot. A tone that retraces its figure hundreds of times per second would burn
+    // everything white, sparse music would be faint: the beam strength is set so the busiest places end near full.
+    std::vector<float> dens, dens_tmp;
+    int gw = 0, gh = 0;
+    float gcell = 8.0f, expo = 0.25f;
+    const double freq = static_cast<double>(A.GetPerformanceFrequency());
+    uint64_t t_last = A.GetPerformanceCounter();
+    long frame_no = 0;
+    bool quit = false;
+    alignas(8) unsigned char ev[128];
+
+    while (!quit) {
+        // ---- events -----------------------------------------------------------------------------------------------
+        bool resized = false;
+        while (A.PollEvent(ev)) {
+            uint32_t type;
+            std::memcpy(&type, ev, 4);
+            if (type == sdl::kEvQuit) quit = true;
+            else if (type == sdl::kEvWindow) {
+                const uint8_t we = ev[12];
+                if (we == sdl::kWinEvClose) quit = true;
+                if (we == sdl::kWinEvResized || we == sdl::kWinEvSizeChanged) resized = true;
+            } else if (type == sdl::kEvKeyDown) {
+                int32_t sym;
+                std::memcpy(&sym, ev + 20, 4);
+                if (sym == sdl::kKeyEsc || sym == 'q' || sym == '9') quit = true;   // 9: SHIFT+9 closes it as in the terminal
+                else if (sym == 'f' || sym == sdl::kKeyF11) {
+                    const bool full = (A.GetWindowFlags(win) & sdl::kWinFullscreenDesktop) == sdl::kWinFullscreenDesktop;
+                    A.SetWindowFullscreen(win, full ? 0 : sdl::kWinFullscreenDesktop);
+                } else if (sym == 't' && A.SetWindowAlwaysOnTop) {
+                    geo.top = !geo.top;
+                    A.SetWindowAlwaysOnTop(win, geo.top ? 1 : 0);
+                }
+            } else if (type == sdl::kEvMouseDown) {
+                if (ev[18] >= 2) {   // double click: fullscreen on / off
+                    const bool full = (A.GetWindowFlags(win) & sdl::kWinFullscreenDesktop) == sdl::kWinFullscreenDesktop;
+                    A.SetWindowFullscreen(win, full ? 0 : sdl::kWinFullscreenDesktop);
+                }
+            } else if (type == sdl::kEvTargetsReset || type == sdl::kEvDeviceReset) resized = true;
+        }
+        if (S.eof.load()) quit = true;
+        if (quit) break;
+        {   // remember the windowed position and size (not the fullscreen one)
+            const uint32_t fl = A.GetWindowFlags(win);
+            geo.full = (fl & sdl::kWinFullscreenDesktop) == sdl::kWinFullscreenDesktop;
+            if (!geo.full && !(fl & sdl::kWinMinimized)) { A.GetWindowPosition(win, &geo.x, &geo.y); A.GetWindowSize(win, &geo.w, &geo.h); }
+            if (fl & (sdl::kWinMinimized | sdl::kWinHidden)) { A.Delay(50); t_last = A.GetPerformanceCounter(); continue; }
+        }
+        if (resized) {
+            A.GetRendererOutputSize(R, &ow, &oh);
+            if (!create(A, R, gpu, ow, oh)) { write_error(std::string("scope window: cannot create textures: ") + A.GetError()); break; }
+            have_last = false;
+        }
+
+        const uint64_t t_now = A.GetPerformanceCounter();
+        const double dt = std::clamp(static_cast<double>(t_now - t_last) / freq, 0.0, 0.25);
+        t_last = t_now;
+
+        // ---- settings and new samples -------------------------------------------------------------------------------
+        uint64_t total;
+        {
+            std::lock_guard<std::mutex> lk(S.m);
+            if (S.cfg_gen != cfg_seen) { cfg = S.cfg; cfg_seen = S.cfg_gen; }
+            total = S.total;
+        }
+        {
+            std::string t = std::string(cfg.title, strnlen(cfg.title, sizeof cfg.title));
+            t = t.empty() ? "Mousiki scope" : t + "  -  Mousiki scope";
+            if (t != title_set) { A.SetWindowTitle(win, t.c_str()); title_set = t; }
+        }
+        const double rate = std::max(8000, static_cast<int>(cfg.rate));
+        const double target_lag = 0.035 * rate;
+        if (!started && total > 0) { play = std::max(0.0, static_cast<double>(total) - target_lag); drawn = static_cast<uint64_t>(play); started = true; }
+        if (started) {
+            play += dt * rate;
+            const double backlog = static_cast<double>(total) - play;
+            if (backlog > 0.30 * rate) play = static_cast<double>(total) - target_lag;   // far behind (e.g. the window was dragged)
+            else play += (backlog - target_lag) * std::min(1.0, dt * 3.0);              // glide to the target lag
+            play = std::min(play, static_cast<double>(total));
+        }
+        // the interpolation below looks kLz samples ahead: never draw closer than that to the newest sample
+        uint64_t upto = static_cast<uint64_t>(std::max(0.0, std::min(play, static_cast<double>(total) - kLz)));
+        if (upto < drawn) upto = drawn;
+        if (upto - drawn > kRing / 2) drawn = upto - kRing / 2;
+        const size_t n_raw = static_cast<size_t>(upto - drawn);
+        // Smoothing between the samples, like the output filter of a real scope's signal path: Lanczos interpolation
+        // to about 192 000 points per second (384 000 in oscilloscope music mode), so fast strokes are curves, not
+        // polygons.
+        const int ups = !cfg.interp ? 1   // dots: only the real samples
+                      : std::clamp(static_cast<int>(std::lround((cfg.music ? 384000.0 : 192000.0) / rate)), 1, cfg.music ? 8 : 4);
+        if (ups != lz_ups) {
+            lz_ups = ups;
+            lz_w.assign(static_cast<size_t>(ups) * 2 * kLz, 0.0f);
+            for (int j = 0; j < ups; ++j) {
+                const double t = static_cast<double>(j) / ups;
+                double sum = 0.0;
+                for (int k = 0; k < 2 * kLz; ++k) {
+                    const double x = t - (k - kLz + 1);   // distance to tap k (taps m-kLz+1 .. m+kLz)
+                    double w;
+                    if (std::fabs(x) < 1e-9) w = 1.0;
+                    else if (std::fabs(x) >= kLz) w = 0.0;
+                    else { const double px = 3.14159265358979 * x; w = kLz * std::sin(px) * std::sin(px / kLz) / (px * px); }
+                    lz_w[static_cast<size_t>(j) * 2 * kLz + k] = static_cast<float>(w);
+                    sum += w;
+                }
+                for (int k = 0; k < 2 * kLz; ++k) lz_w[static_cast<size_t>(j) * 2 * kLz + k] = static_cast<float>(lz_w[static_cast<size_t>(j) * 2 * kLz + k] / sum);
+            }
+        }
+        rx.resize(n_raw + 2 * kLz);
+        ry.resize(n_raw + 2 * kLz);
+        if (n_raw > 0) {
+            std::lock_guard<std::mutex> lk(S.m);
+            for (size_t i = 0; i < rx.size(); ++i) {   // samples drawn - kLz .. upto + kLz - 1
+                const long long idx = static_cast<long long>(drawn) - kLz + static_cast<long long>(i);
+                if (idx < 0 || static_cast<uint64_t>(idx) >= total || total - static_cast<uint64_t>(idx) > kRing) { rx[i] = ry[i] = 0.0f; continue; }
+                const size_t at = static_cast<size_t>(static_cast<uint64_t>(idx) & (kRing - 1));
+                rx[i] = S.ring[2 * at];
+                ry[i] = S.ring[2 * at + 1];
+            }
+        }
+        const size_t n = n_raw * static_cast<size_t>(ups);
+        xs.resize(n);
+        ys.resize(n);
+        for (size_t m = 0; m < n_raw; ++m) {
+            for (int j = 0; j < ups; ++j) {
+                const float* w = lz_w.data() + static_cast<size_t>(j) * 2 * kLz;
+                float vx = 0.0f, vy = 0.0f;
+                for (int k = 0; k < 2 * kLz; ++k) {   // tap k = sample m - kLz + 1 + k = rx index m + 1 + k
+                    vx += w[k] * rx[m + 1 + static_cast<size_t>(k)];
+                    vy += w[k] * ry[m + 1 + static_cast<size_t>(k)];
+                }
+                xs[m * static_cast<size_t>(ups) + static_cast<size_t>(j)] = vx;
+                ys[m * static_cast<size_t>(ups) + static_cast<size_t>(j)] = vy;
+            }
+        }
+        drawn = upto;
+
+        // ---- the same signal shaping as the terminal scope ----------------------------------------------------------------
+        const float k30 = static_cast<float>(dt * 30.0);   // the terminal values are per 1/30 s
+        if (n > 0) {
+            double em = 0.0, es = 0.0;
+            for (size_t i = 0; i < n; ++i) {
+                const double m = xs[i] + ys[i], s = xs[i] - ys[i];
+                em += m * m;
+                es += s * s;
+            }
+            const float ratio = static_cast<float>(es / (em + 1e-9));
+            const float want = (cfg.mono_phase && !cfg.music) ? std::clamp((kMonoNone - ratio) / (kMonoNone - kMonoFull), 0.0f, 1.0f) : 0.0f;
+            mono += (want - mono) * std::min(1.0f, 0.25f * k30);
+            // the mid signal and its rate of change (difference over 2 * kDeriv samples, continued across frames)
+            mids.resize(n);
+            for (size_t i = 0; i < n; ++i) mids[i] = 0.5f * (xs[i] + ys[i]);
+            if (mono > 0.001f) {
+                std::vector<float> q(n);
+                double rs = 0.0, rq = 0.0;
+                for (size_t i = 0; i < n; ++i) {
+                    const float back = i >= static_cast<size_t>(2 * kDeriv) ? mids[i - 2 * kDeriv] : mid_hist[i];
+                    q[i] = mids[i] - back;
+                    rs += static_cast<double>(mids[i]) * mids[i];
+                    rq += static_cast<double>(q[i]) * q[i];
+                }
+                const float sc = std::min(400.0f, static_cast<float>(std::sqrt(rs / n) / std::max(std::sqrt(rq / n), 1e-6)));
+                pscale = pscale <= 0.0f ? sc : pscale + (sc - pscale) * std::min(1.0f, 0.2f * k30);
+                for (size_t i = 0; i < n; ++i) {
+                    xs[i] = xs[i] + (mids[i] - xs[i]) * mono;
+                    ys[i] = ys[i] + (q[i] * pscale - ys[i]) * mono;
+                }
+            }
+            {   // keep the newest 2 * kDeriv mids (oldest first) for the next frame
+                float comb[2 * kDeriv];
+                for (int i = 0; i < 2 * kDeriv; ++i) {
+                    const long j = static_cast<long>(n) - 2 * kDeriv + i;   // index into this frame's mids
+                    comb[i] = j >= 0 ? mids[static_cast<size_t>(j)] : mid_hist[static_cast<size_t>(i) + n];   // older: from the last frame
+                }
+                std::memcpy(mid_hist, comb, sizeof comb);
+            }
+            if (cfg.rotate) {
+                constexpr float r2 = 0.70710678f;
+                for (size_t i = 0; i < n; ++i) {
+                    const float a = xs[i], b = ys[i];
+                    xs[i] = (a - b) * r2;
+                    ys[i] = (a + b) * r2;
+                }
+            }
+            float fp = 0.0f;
+            for (size_t i = 0; i < n; ++i) fp = std::max(fp, std::max(std::fabs(xs[i]), std::fabs(ys[i])));
+            const float keep = std::pow(0.97f, k30);
+            peak = fp > peak ? fp : peak * keep + fp * (1.0f - keep);
+        }
+        const float gain = cfg.music ? 1.0f : 1.0f / std::max(peak, 0.05f);   // music mode: full scale = the edge
+
+        // ---- phosphor decay, in steps of 1/60 s ---------------------------------------------------------------------------
+        A.SetRenderTarget(R, gpu.accum);
+        decay_acc += dt;
+        int steps = 0;
+        while (decay_acc >= 1.0 / 60.0 && steps < 30) { decay_acc -= 1.0 / 60.0; ++steps; }
+        if (steps >= 30) decay_acc = 0.0;
+        if (steps > 0) {
+            const float f = std::pow(std::clamp(cfg.decay, 0.0f, 0.99f), 0.5f * static_cast<float>(steps));
+            A.SetRenderDrawBlendMode(R, sdl::kBlendBlend);
+            A.SetRenderDrawColor(R, 0, 0, 0, static_cast<uint8_t>(std::lround((1.0f - f) * 255.0f)));
+            A.RenderFillRect(R, nullptr);
+            if (sub_ok) {
+                const uint8_t sub = static_cast<uint8_t>(std::min(steps, 8));
+                A.SetRenderDrawBlendMode(R, sub_blend);
+                A.SetRenderDrawColor(R, sub, sub, sub, 0);
+                A.RenderFillRect(R, nullptr);
+            }
+            A.SetRenderDrawBlendMode(R, sdl::kBlendNone);
+            for (float& d : dens) d *= f;
+        }
+
+        // ---- the beam ------------------------------------------------------------------------------------------------
+        const float side = static_cast<float>(std::min(gpu.w, gpu.h));
+        const float cx = gpu.w * 0.5f, cy = gpu.h * 0.5f;
+        const float amp = side * 0.5f * 0.94f;
+        const float hw = cfg.music ? std::max(0.9f, side * 0.0013f) : std::max(1.4f, side * 0.0026f);   // half width of the beam
+        {
+            const float want_cell = std::max(4.0f, 6.0f * hw);
+            const int ngw = std::max(1, static_cast<int>(std::ceil(gpu.w / want_cell)));
+            const int ngh = std::max(1, static_cast<int>(std::ceil(gpu.h / want_cell)));
+            if (ngw != gw || ngh != gh) { gw = ngw; gh = ngh; gcell = want_cell; dens.assign(static_cast<size_t>(gw) * gh, 0.0f); }
+        }
+        auto splat = [&](float x0, float y0, float x1, float y1, float len, float wgt) {
+            const int k = std::max(1, static_cast<int>(std::ceil(len / (gcell * 0.5f))));
+            const float add = std::max(len, hw) / k / gcell * wgt;
+            for (int j = 0; j < k; ++j) {
+                const float t = (j + 0.5f) / k;
+                const int ix = std::clamp(static_cast<int>((x0 + (x1 - x0) * t) / gcell), 0, gw - 1);
+                const int iy = std::clamp(static_cast<int>((y0 + (y1 - y0) * t) / gcell), 0, gh - 1);
+                dens[static_cast<size_t>(iy) * gw + ix] += add;
+            }
+        };
+        verts.clear();
+        idx.clear();
+        double spd_sum = 0.0;
+        int spd_n = 0;
+        auto colour = [&](float x, float spd_t, float a, sdl::Vertex& v) {
+            int h;
+            if (cfg.color_by_x) h = static_cast<int>(std::lround(std::clamp((x - (cx - amp)) / (2.0f * amp), 0.0f, 1.0f) * 255.0f));
+            else h = static_cast<int>(std::lround(std::clamp(spd_t, 0.0f, 1.0f) * 255.0f));
+            const uint8_t* p = cfg.pal[h];
+            v.r = static_cast<uint8_t>(p[0] * 0.90f + 255 * 0.10f);   // a little white: dense parts of the trace burn white
+            v.g = static_cast<uint8_t>(p[1] * 0.90f + 255 * 0.10f);
+            v.b = static_cast<uint8_t>(p[2] * 0.90f + 255 * 0.10f);
+            v.a = static_cast<uint8_t>(std::lround(std::clamp(a, 0.0f, 1.0f) * 255.0f));
+        };
+        auto quad = [&](float x0, float y0, float x1, float y1, float r, const sdl::Vertex& c0, const sdl::Vertex& c1, bool dot) {
+            const int b = static_cast<int>(verts.size());
+            sdl::Vertex v[4] = {c0, c0, c1, c1};
+            if (dot) {
+                v[0].x = x0 - r; v[0].y = y0 - r; v[0].u = 0; v[0].v = 0;
+                v[1].x = x0 + r; v[1].y = y0 - r; v[1].u = 1; v[1].v = 0;
+                v[2].x = x0 + r; v[2].y = y0 + r; v[2].u = 1; v[2].v = 1;
+                v[3].x = x0 - r; v[3].y = y0 + r; v[3].u = 0; v[3].v = 1;
+            } else {
+                const float dx = x1 - x0, dy = y1 - y0;
+                const float len = std::sqrt(dx * dx + dy * dy);
+                const float nx = -dy / len * r, ny = dx / len * r;
+                v[0].x = x0 + nx; v[0].y = y0 + ny; v[0].u = 0.5f; v[0].v = 0.0f;
+                v[1].x = x0 - nx; v[1].y = y0 - ny; v[1].u = 0.5f; v[1].v = 1.0f;
+                v[2].x = x1 - nx; v[2].y = y1 - ny; v[2].u = 0.5f; v[2].v = 1.0f;
+                v[3].x = x1 + nx; v[3].y = y1 + ny; v[3].u = 0.5f; v[3].v = 0.0f;
+            }
+            for (auto& q : v) verts.push_back(q);
+            for (int k : {0, 1, 2, 0, 2, 3}) idx.push_back(b + k);
+        };
+        for (size_t i = 0; i < n; ++i) {
+            const float x = cx + std::clamp(xs[i] * gain, -1.05f, 1.05f) * amp;
+            const float y = cy - std::clamp(ys[i] * gain, -1.05f, 1.05f) * amp;
+            if (!have_last) { last_x = x; last_y = y; have_last = true; }
+            const float dx = x - last_x, dy = y - last_y;
+            const float len = std::sqrt(dx * dx + dy * dy);
+            const float lspd = std::log10(len / side + 1e-5f);
+            spd_sum += lspd;
+            ++spd_n;
+            const float spd_t = (lspd - spd_lo) / std::max(0.2f, spd_hi - spd_lo);
+            float a = 1.0f;
+            if (cfg.z) {
+                float zf;
+                if (cfg.z_source == 0) zf = 1.0f / (1.0f + len / (3.0f * hw));
+                else zf = std::clamp(std::sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy)) / amp, 0.0f, 1.0f);
+                a *= (1.0f - cfg.z_depth) + cfg.z_depth * zf;
+            }
+            splat(last_x, last_y, x, y, len, a);
+            a *= expo;
+            sdl::Vertex c0{}, c1{};
+            colour(last_x, spd_t, a, c0);
+            colour(x, spd_t, a, c1);
+            if (!cfg.interp) quad(x, y, x, y, hw * 1.6f, c1, c1, true);
+            else if (len < 0.35f) quad(x, y, x, y, hw, c1, c1, true);
+            else quad(last_x, last_y, x, y, hw, c0, c1, false);
+            last_x = x;
+            last_y = y;
+        }
+        if (n > 0) {   // exposure from the busiest 10 % of the places the beam has been
+            dens_tmp.clear();
+            for (float d : dens) if (d > 0.05f) dens_tmp.push_back(d);
+            if (dens_tmp.size() >= 8) {
+                const size_t at = dens_tmp.size() - 1 - dens_tmp.size() / 10;
+                std::nth_element(dens_tmp.begin(), dens_tmp.begin() + static_cast<long>(at), dens_tmp.end());
+                const float busy = std::max(dens_tmp[at], 1e-3f);
+                const float want = std::clamp(1.8f / busy, 0.02f, 0.90f);
+                expo += (want - expo) * std::min(1.0f, static_cast<float>(dt) * 4.0f);
+            }
+        }
+        if (spd_n > 0) {   // the speed palette follows the music: the range spans the recent speeds
+            const float m = static_cast<float>(spd_sum / spd_n);
+            const float k = std::min(1.0f, static_cast<float>(dt) * 2.0f);
+            spd_lo += (m - 0.9f - spd_lo) * k;
+            spd_hi += (m + 0.9f - spd_hi) * k;
+        }
+        if (!idx.empty())
+            A.RenderGeometry(R, gpu.beam, verts.data(), static_cast<int>(verts.size()), idx.data(), static_cast<int>(idx.size()));
+
+        // ---- on screen: phosphor + bloom ------------------------------------------------------------------------------
+        A.SetTextureBlendMode(gpu.accum, sdl::kBlendNone);
+        A.SetTextureBlendMode(gpu.half, sdl::kBlendNone);
+        A.SetTextureBlendMode(gpu.quarter, sdl::kBlendNone);
+        A.SetRenderTarget(R, gpu.half);    A.RenderCopy(R, gpu.accum, nullptr, nullptr);
+        A.SetRenderTarget(R, gpu.quarter); A.RenderCopy(R, gpu.half, nullptr, nullptr);
+        A.SetRenderTarget(R, gpu.eighth);  A.RenderCopy(R, gpu.quarter, nullptr, nullptr);
+        A.SetRenderTarget(R, nullptr);
+        A.SetRenderDrawColor(R, 0, 0, 0, 255);
+        A.RenderClear(R);
+        A.RenderCopy(R, gpu.accum, nullptr, nullptr);
+        const float glow = std::clamp(cfg.glow, 0.0f, 1.0f);
+        if (glow > 0.0f) {
+            A.SetTextureBlendMode(gpu.quarter, sdl::kBlendAdd);
+            A.SetTextureBlendMode(gpu.eighth, sdl::kBlendAdd);
+            // the shrunk copies are faint (a thin line is averaged with its dark surroundings): added more than once
+            const float g = glow * 2.2f;
+            for (int pass = 0; pass < 2; ++pass) {
+                const float gq = std::clamp(g * 0.8f - pass, 0.0f, 1.0f), ge = std::clamp(g - pass, 0.0f, 1.0f);
+                if (gq > 0.0f) { A.SetTextureAlphaMod(gpu.quarter, static_cast<uint8_t>(std::lround(gq * 255.0f))); A.RenderCopy(R, gpu.quarter, nullptr, nullptr); }
+                if (ge > 0.0f) { A.SetTextureAlphaMod(gpu.eighth, static_cast<uint8_t>(std::lround(ge * 255.0f))); A.RenderCopy(R, gpu.eighth, nullptr, nullptr); }
+            }
+        }
+        ++frame_no;
+        if (shot_path && frame_no == shot_frame) {
+            std::vector<uint32_t> px(static_cast<size_t>(gpu.w) * gpu.h);
+            if (A.RenderReadPixels(R, nullptr, sdl::kFmtARGB8888, px.data(), gpu.w * 4) == 0) write_ppm(shot_path, px, gpu.w, gpu.h);
+            if (shot_exit) quit = true;
+        }
+        A.RenderPresent(R);
+        // without vsync (some drivers ignore it) do not spin faster than 240 frames per second
+        const double spent = static_cast<double>(A.GetPerformanceCounter() - t_now) / freq;
+        if (spent < 1.0 / 240.0) A.Delay(static_cast<uint32_t>((1.0 / 240.0 - spent) * 1000.0));
+    }
+
+    save_geometry(geo);
+    destroy(A, gpu);
+    A.DestroyRenderer(R);
+    A.DestroyWindow(win);
+    A.Quit();
+    return 0;
+}
+
+} // namespace muisc

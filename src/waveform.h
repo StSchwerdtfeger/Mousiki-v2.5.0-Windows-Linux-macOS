@@ -48,6 +48,12 @@ public:
     // correct at any width instead of the old fixed-100-column data
     // just going blank past column 100 on a wide terminal, or showing
     // an un-rescaled partial slice of the track on a narrow one.
+    // The same model from the figures of the analysis pass of a long track (StreamingPcm windowed mode: sums of
+    // squares per `gran` frames), without the samples themselves.
+    static std::vector<float> envelope_from_bins(const std::vector<float>& sumsq, size_t gran, size_t total_frames,
+                                                 int resolution = 4096, bool smooth = true);
+    static std::vector<float> finish_envelope(const std::vector<float>& raw_rms, int resolution, bool smooth);
+
     static std::vector<int> resample_for_ui(const std::vector<float>& high_res_model, int terminal_width);
 };
 
@@ -67,5 +73,16 @@ public:
 // visualizer without it needing to touch `pcm` directly.
 void stream_decode_ffmpeg(const fs::path& file_path, StreamingPcm& pcm,
                            const std::function<void(const float*, size_t)>& on_chunk = nullptr);
+
+// Long tracks (StreamingPcm::windowed): keeps the window around the player's position filled, moving to wherever the
+// player seeks, until `abandoned()` (nobody holds the track any more). Runs on its own thread.
+void stream_decode_windowed(const fs::path& file_path, StreamingPcm& pcm, const std::function<bool()>& abandoned);
+// Long tracks: one pass over the whole file for the loudness and the waveform figures (nothing else is kept); sets
+// analysis_done, the exact length and the final loudness. Runs on its own thread, next to stream_decode_windowed.
+void analyse_track(const fs::path& file_path, StreamingPcm& pcm, const std::function<bool()>& abandoned);
+
+// The rate a track is decoded and played at: its own (read from the file header; `sampling_hint` is ffprobe's value
+// as a fallback), so playback never resamples it -- up to 96 kHz. 44100 when it cannot be found out.
+int native_sample_rate(const fs::path& file_path, const std::string& sampling_hint, double duration_sec);
 
 } // namespace muisc

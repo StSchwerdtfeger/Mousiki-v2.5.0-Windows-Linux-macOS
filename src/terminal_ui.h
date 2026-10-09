@@ -225,6 +225,12 @@ std::string utf8_skip_take(const std::string& s, int skip_cols, int take_cols);
 // Computes terminal display width of a UTF-8 string based on wcwidth.
 int display_width(const std::string& s);
 
+// High frame rates: instead of the whole screen, only the lines that changed since the last frame. `body` is a frame
+// written top to bottom from row 1 with '\n' (or "\r\n") between the lines; each changed line is sent with its own
+// cursor position and a colour reset in front. `prev` holds the last frame's lines and is updated. Returns false when
+// the number of lines changed -- then the caller sends the whole frame (and `prev` is set from it).
+bool diff_frame_lines(const std::string& body, std::vector<std::string>& prev, std::string& out);
+
 // Emoji handling (see the long comment above replace_emoji() in
 // terminal_ui.cpp). On (the default): every emoji cluster is measured and
 // drawn as a single "?" by display_width()/pad_right()/truncate_str()/

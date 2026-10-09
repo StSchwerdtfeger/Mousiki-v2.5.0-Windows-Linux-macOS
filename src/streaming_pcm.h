@@ -2,7 +2,10 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <chrono>
+#include <cstdint>
 #include <limits>
+#include <thread>
 #include <vector>
 #include "loudness_meter.h"
 
@@ -58,17 +61,127 @@ struct StreamingPcm {
     LoudnessMeter meter;                       // decode thread only
     LoudnessMeter meter_mono;                  // decode thread only; fed only when channels == 2
 
+    // ---- Windowed mode (long / big tracks) ------------------------------------------------------------------------
+    // A whole track as 32-bit float is 8 bytes per stereo frame: an 80-minute file at 48 kHz is 1.8 GB. Above
+    // kWindowBytes the buffer instead holds a window of kWindowSeconds around the playing position (a ring): the
+    // decoder stays up to 3/4 of it ahead and keeps 1/4 behind (a short step back needs no new decoding), and a seek
+    // outside it moves the decoder there (stream_decode_ffmpeg). The audio itself is exactly the same -- same rate,
+    // same 32-bit samples -- only less of it is held at once. Loudness and the waveform then come from a separate
+    // pass over the whole file that keeps nothing but the figures (analyse_track).
+    //
+    // Positions stay ABSOLUTE frame numbers in both modes; in windowed mode frame f lives at ring slot f % ring_frames
+    // and only [start, available) is held.
+    static constexpr double kWindowBytes = 192.0 * 1024 * 1024;
+    static constexpr double kWindowSeconds = 120.0;
+    bool windowed = false;
+    size_t ring_frames = 0;
+    std::atomic<size_t> start{0};                   // first frame held (windowed; SIZE_MAX while moving)
+    std::atomic<long long> play_pos{0};             // the player's position (windowed: tells the decoder where to be)
+    std::atomic<size_t> total_frames{0};            // exact length once known (0 = not yet)
+    size_t est_frames = 0;                          // estimated length (duration probe)
+    // waveform figures of the analysis pass (windowed): sum of squares of the mono fold per kEnvGran frames
+    static constexpr size_t kEnvGran = 256;
+    std::vector<float> env_sumsq;                   // written by the analysis pass; read after analysis_done
+    std::atomic<bool> analysis_done{false};
+    std::atomic<long> internal_refs{0};             // shared_ptr holders that are the decode threads themselves
+
     void reserve_for_seconds(double seconds, int sr, int ch = 1) {
         sample_rate = sr;
         channels = ch >= 2 ? 2 : 1;
         meter.reset(sr, channels);
         meter_mono.reset(sr, 1);
+        est_frames = static_cast<size_t>(std::max(1.0, seconds) * sr);
         size_t est = static_cast<size_t>(std::max(1.0, seconds) * sr * 1.25); // 25% headroom, in frames
+        const double bytes = static_cast<double>(est) * channels * sizeof(float);
+        if (bytes > kWindowBytes && static_cast<double>(est_frames) > kWindowSeconds * sr * 1.5) {
+            windowed = true;
+            ring_frames = static_cast<size_t>(kWindowSeconds * sr);
+            data.assign(ring_frames * static_cast<size_t>(channels), 0.0f);
+            return;
+        }
         data.reserve(std::max<size_t>(est, static_cast<size_t>(sr) * 5) * static_cast<size_t>(channels));
     }
 
     // Capacity in frames (what seeking is clamped against).
     size_t capacity_frames() const { return data.capacity() / static_cast<size_t>(channels); }
+    // How far the player may seek (frames).
+    size_t seek_limit_frames() const {
+        if (!windowed) return capacity_frames();
+        const size_t t = total_frames.load(std::memory_order_acquire);
+        return t > 0 ? t : est_frames + static_cast<size_t>(sample_rate) * 5;
+    }
+    // Sample index of frame f (interleaved, channel 0).
+    size_t slot(size_t f) const { return (windowed ? f % ring_frames : f) * static_cast<size_t>(channels); }
+    // Player: the frames that can be read now, [lo, hi). A seek in progress reads as nothing.
+    void readable(size_t& lo, size_t& hi) const {
+        if (!windowed) { lo = 0; hi = available.load(std::memory_order_acquire); return; }
+        const size_t s1 = start.load(std::memory_order_acquire);
+        hi = available.load(std::memory_order_acquire);
+        const size_t s2 = start.load(std::memory_order_acquire);
+        lo = s1;
+        if (s1 != s2 || s1 == SIZE_MAX || hi < s1) lo = hi;
+    }
+
+    // Windowed decode thread: where the decoder must go next. Returns true (and the frame) when the player's position
+    // is outside what is held / being filled (a seek, or the start of a track resumed somewhere in the middle).
+    bool need_seek(size_t& to) const {
+        const long long p = std::max(0ll, play_pos.load(std::memory_order_relaxed));
+        const size_t s = start.load(std::memory_order_relaxed), a = available.load(std::memory_order_relaxed);
+        const size_t t = total_frames.load(std::memory_order_relaxed);
+        const size_t up = static_cast<size_t>(p);
+        if (t > 0 && up >= t) return false;   // past the end: nothing to fetch
+        if (up < s || up > a + static_cast<size_t>(sample_rate) * 2) { to = up; return true; }
+        return false;
+    }
+    // Windowed decode thread: the decoder now continues at frame `p`; nothing old is held any more.
+    void reposition(size_t p) {
+        decode_done.store(false, std::memory_order_relaxed);
+        start.store(SIZE_MAX, std::memory_order_release);
+        available.store(p, std::memory_order_release);
+        start.store(p, std::memory_order_release);
+    }
+    // Windowed decode thread: store frames at the end of the window. Waits while the window is full ahead of the
+    // player. Returns false (the rest not stored) when the decoder must move (need_seek) or give up (`abandoned`).
+    template <class Abandoned>
+    bool write_window(const float* samples, size_t frames, const Abandoned& abandoned) {
+        const size_t ch = static_cast<size_t>(channels);
+        const size_t ahead = ring_frames - ring_frames / 4;
+        size_t done = 0;
+        while (done < frames) {
+            size_t to;
+            if (need_seek(to) || abandoned()) return false;
+            const size_t a = available.load(std::memory_order_relaxed);
+            const long long p = std::max(0ll, play_pos.load(std::memory_order_relaxed));
+            const size_t room_to = static_cast<size_t>(p) + ahead;
+            if (a >= room_to) { std::this_thread::sleep_for(std::chrono::milliseconds(15)); continue; }
+            size_t n = std::min(frames - done, room_to - a);
+            n = std::min(n, ring_frames - a % ring_frames);   // up to the end of the ring
+            // the frames about to be overwritten are no longer held -- say so BEFORE writing over them
+            const size_t new_end = a + n;
+            if (new_end > ring_frames) {
+                const size_t s = start.load(std::memory_order_relaxed);
+                if (new_end - ring_frames > s) start.store(new_end - ring_frames, std::memory_order_release);
+            }
+            std::copy(samples + done * ch, samples + (done + n) * ch, data.begin() + static_cast<long>((a % ring_frames) * ch));
+            available.store(new_end, std::memory_order_release);
+            done += n;
+        }
+        return true;
+    }
+    // Analysis pass (windowed): loudness and waveform figures of a stretch of the track, in order from its start.
+    void analyse(const float* samples, size_t frames) {
+        feed_meters(samples, frames);
+        const size_t ch = static_cast<size_t>(channels);
+        for (size_t i = 0; i < frames; ++i) {
+            const float m = ch == 2 ? 0.5f * (samples[2 * i] + samples[2 * i + 1]) : samples[i];
+            env_acc_ += m * m;
+            if (++env_n_ == kEnvGran) { env_sumsq.push_back(static_cast<float>(env_acc_)); env_acc_ = 0; env_n_ = 0; }
+        }
+    }
+    void analyse_end() {
+        if (env_n_ > 0) env_sumsq.push_back(static_cast<float>(env_acc_));
+        env_acc_ = 0; env_n_ = 0;
+    }
 
     // Decode thread only. `frames` interleaved frames.
     void append(const float* samples, size_t frames) {
@@ -81,20 +194,24 @@ struct StreamingPcm {
             available.store(data.size() / ch, std::memory_order_release);
             // Measured from the stored copy; capacity is fixed so the
             // pointer is stable (see the class comment).
-            meter.push(data.data() + before, n);
-            if (ch == 2) {
-                float mix[1024];
-                for (size_t done = 0; done < n;) {
-                    const size_t m = std::min<size_t>(1024, n - done);
-                    const float* src = data.data() + before + done * 2;
-                    for (size_t i = 0; i < m; ++i) mix[i] = 0.5f * (src[2 * i] + src[2 * i + 1]);
-                    meter_mono.push(mix, m);
-                    done += m;
-                }
-            }
-            if (meter.take_updated() && meter.seconds_analyzed() >= kMinAnalysisSeconds) publish_loudness();
+            feed_meters(data.data() + before, n);
         }
         if (n < frames) capacity_exceeded.store(true, std::memory_order_relaxed);
+    }
+
+    void feed_meters(const float* src0, size_t n) {
+        meter.push(src0, n);
+        if (channels == 2) {
+            float mix[1024];
+            for (size_t done = 0; done < n;) {
+                const size_t m = std::min<size_t>(1024, n - done);
+                const float* src = src0 + done * 2;
+                for (size_t i = 0; i < m; ++i) mix[i] = 0.5f * (src[2 * i] + src[2 * i + 1]);
+                meter_mono.push(mix, m);
+                done += m;
+            }
+        }
+        if (meter.take_updated() && meter.seconds_analyzed() >= kMinAnalysisSeconds) publish_loudness();
     }
 
     // Decode thread, once decoding has ended (success or failure): publish
@@ -107,6 +224,8 @@ struct StreamingPcm {
     }
 
 private:
+    double env_acc_ = 0;
+    size_t env_n_ = 0;
     void publish_loudness() {
         const double l = meter.integrated_lufs();
         if (std::isnan(l)) return;

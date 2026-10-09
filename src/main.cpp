@@ -4,12 +4,27 @@
 #include <string>
 #include "app.h"
 #include "mode_switch.h"
+#include "scope_window.h"
 
 #if defined(_WIN32)
 #include "win_compat.h"
 #endif
 
-int main() {
+int main(int argc, char** argv) {
+    // `mousiki --scope-window`: the oscilloscope window, started by the player / radio itself (src/scope_window.h).
+    // It never touches the terminal.
+    if (argc > 1 && std::string(argv[1]) == "--scope-window") {
+#if defined(_WIN32)
+        muisc::win_bootstrap_env();   // HOME, for its position file
+#endif
+        return muisc::scope_window_main();
+    }
+    if (argc > 1 && std::string(argv[1]) == "--spectro-window") {   // the spectrogram window, the same way
+#if defined(_WIN32)
+        muisc::win_bootstrap_env();
+#endif
+        return muisc::spectro_window_main();
+    }
 #if defined(_WIN32)
     // Order matters. Both of these have to happen before App's constructor
     // runs: it loads settings, which resolves $HOME, and it may log, which
@@ -82,6 +97,8 @@ int main() {
             rc = 0;
         }
         if (app && app->suspended()) app->shutdown();   // quit from the radio: now the player really ends
+        muisc::scope_window_close();            // the scope window (if open) closes with the program
+        muisc::spectro_window_close();          // and the spectrogram window
         muisc::terminal_release_alt_screen();   // (only does something when a mode ended for a switch and the other one never started)
     } catch (const std::exception& e) {
         // Belt-and-braces on top of settings.cpp's own try/catch around

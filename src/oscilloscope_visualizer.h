@@ -61,6 +61,7 @@ public:
         bool rotate = false;                 // turn the picture by 45 degrees: mid on the vertical, side on the horizontal axis
         bool mono_phase = true;              // near-mono signals cross-fade to a phase portrait (else a diagonal line)
         float glow = 0.60f;                  // render_image(): strength / size of the bloom around the beam, 0 .. 1
+        bool fixed_gain = false;             // oscilloscope music mode: full scale = the edge, no automatic size
     };
     void push_frames(const float* interleaved_lr, size_t frames);
     void reset();

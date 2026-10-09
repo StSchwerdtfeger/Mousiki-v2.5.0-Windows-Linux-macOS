@@ -127,6 +127,76 @@ std::vector<OnlineResult> OnlineSource::search(const std::string& query, int cou
     return search_via_ytdlp(query, count);
 }
 
+// One JSON object per line with a page URL instead of a video id (SoundCloud via yt-dlp, Bandcamp via the script):
+// the URL becomes the result's id (see OnlineResult).
+static std::vector<OnlineResult> parse_url_lines(const std::string& out) {
+    std::vector<OnlineResult> results;
+    std::istringstream stream(out);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.empty() || line[0] != '{') continue;
+        OnlineResult item;
+        std::string url, uploader;
+        if (!json_get_string(line, "webpage_url", url) || url.find("://") == std::string::npos) json_get_string(line, "url", url);
+        json_get_string(line, "title", item.title);
+        if (!json_get_string(line, "uploader", uploader)) json_get_string(line, "artist", uploader);
+        item.uploader = uploader;
+        json_get_number(line, "duration", item.duration_sec);
+        if (url.find("://") == std::string::npos || item.title.empty()) continue;
+        item.video_id = url;
+        results.push_back(std::move(item));
+    }
+    return results;
+}
+
+// A SoundCloud track whose every stream is a preview (the 30-second "snippet" SoundCloud plays for Go+ tracks and
+// some label releases): yt-dlp marks those streams with "preview" in their format id. No stream at all (DRM, blocked
+// in this country) cannot be played either.
+static bool soundcloud_preview_only(const std::string& line) {
+    const std::string key = "\"format_id\": \"";
+    size_t at = 0;
+    int all = 0, preview = 0;
+    while ((at = line.find(key, at)) != std::string::npos) {
+        at += key.size();
+        const size_t end = line.find('"', at);
+        if (end == std::string::npos) break;
+        ++all;
+        if (line.substr(at, end - at).find("preview") != std::string::npos) ++preview;
+        at = end;
+    }
+    return all == 0 || preview == all;
+}
+
+std::vector<OnlineResult> OnlineSource::search_soundcloud(const std::string& query, int count) {
+    // Not --flat-playlist: only the full listing has the streams, and only they tell a 30-second preview from the
+    // whole track (the duration shown is the full one either way). Somewhat slower; a few more results are asked
+    // for, since previews are dropped.
+    const int ask = count + count / 2;
+    std::string cmd = "yt-dlp --no-warnings --ignore-errors -j " + shell_quote("scsearch" + std::to_string(ask) + ":" + query);
+    ProcResult r = run_capture(cmd);
+    std::string kept;
+    std::istringstream stream(r.out);
+    std::string line;
+    while (std::getline(stream, line))
+        if (!line.empty() && line[0] == '{' && !soundcloud_preview_only(line)) kept += line + "\n";
+    auto results = parse_url_lines(kept);
+    if (static_cast<int>(results.size()) > count) results.resize(static_cast<size_t>(count));
+    return results;
+}
+
+std::vector<OnlineResult> OnlineSource::search_bandcamp(const std::string& query, int count, const std::string& script_path) {
+    if (script_path.empty()) return {};
+#if defined(_WIN32)
+    const std::string& python = win_python_command();
+    if (python.empty()) return {};
+#else
+    const std::string python = "python3";
+#endif
+    std::string cmd = python + " " + shell_quote(script_path) + " " + shell_quote(query) + " " + std::to_string(count);
+    ProcResult r = run_capture(cmd);
+    return parse_url_lines(r.out);
+}
+
 std::vector<OnlineResult> OnlineSource::list_playlist(const std::string& url, std::string* error_out) {
     std::vector<OnlineResult> results;
     std::string trimmed = url;

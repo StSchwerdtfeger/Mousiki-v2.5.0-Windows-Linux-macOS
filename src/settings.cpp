@@ -370,6 +370,13 @@ void apply_default_hotkeys(Settings& s) {
             // threshold / tail brightness, live). Uppercase on purpose, same
             // convention as the other SHIFT+letter overlays above.
             {"HKeyOscMenu",                     "O"},
+            // The oscilloscope / the spectrogram in their own windows (drawn by the graphics card, src/scope_window.h):
+            // the characters of SHIFT+9 / SHIFT+8 on a German keyboard (on a US keyboard SHIFT+0 / SHIFT+9).
+            {"HKeyScopeWindow",                 ")"},
+            {"HKeySpectroWindow",               "("},
+            // Shift+I / Shift+U: spectrogram options overlay / spectrogram full screen.
+            {"HKeySpectroMenu",                 "I"},
+            {"HKeySpectroFull",                 "U"},
             // Shift+V: the loudness normalisation overlay (on/off, target
             // level, max boost, live). Uppercase on purpose -- plain "v" is
             // HKeyToggleNormalize, same convention as the other overlays.
@@ -430,6 +437,15 @@ void apply_default_hotkeys(Settings& s) {
                     if (action != "HKeyRefreshUi" && key == "r") { r_taken = true; break; }
                 if (!r_taken) ref->second = "r";
                 else s.hotkeys["HKeyKaraoke"] = "";   // no free default: left unbound (rebind it under Settings -> REFERENCE)
+            }
+        }
+        // v3.1: the scope window moved from SHIFT+w ("W") to SHIFT+9 (")"), next to the spectrogram window on SHIFT+8.
+        {
+            auto sw = s.hotkeys.find("HKeyScopeWindow");
+            if (sw != s.hotkeys.end() && sw->second == "W") {
+                bool taken = false;
+                for (const auto& [action, key] : s.hotkeys) if (action != "HKeyScopeWindow" && key == ")") taken = true;
+                if (!taken) sw->second = ")";
             }
         }
         for (const auto& [action, key] : defaults) {
@@ -656,6 +672,7 @@ static Settings load_from_config(const fs::path& path) {
             {"Seprator", "seprator"}, {"ListSeparator", "list_separator"},
         };
         if (osci_config_key(s, key, value)) continue;
+        if (spectro_config_key(s.spectro, key, value)) continue;
         {
             auto it = kKeyAliases.find(key);
             if (it != kKeyAliases.end()) key = it->second;
@@ -680,6 +697,9 @@ static Settings load_from_config(const fs::path& path) {
         if (key == "Eliment_queue" || key == "Element_queue") { s.element_queue = parse_bool(value); continue; }
         if (key == "Eliment_waveform_progress_bar" || key == "Element_waveform") { s.element_waveform = parse_bool(value); continue; }
         if (key == "Eliment_lyrics" || key == "Element_lyrics") { s.element_lyrics = parse_bool(value); continue; }
+        if (key == "UseLyrics") { s.use_lyrics = parse_bool(value); continue; }
+        if (key == "UseOscilloscope") { s.use_osci = parse_bool(value); continue; }
+        if (key == "UseSpectrogram") { s.use_spectro = parse_bool(value); continue; }
         if (key == "Eliment_lyrics_placeholder_ball" || key == "Element_lyrics_placeholder_ball") {
             // Legacy "Lyric Ball" on/off switch, now a two-way pick
             // (LyricViz=sphere|osci) with no "off" state: true keeps the
@@ -693,6 +713,7 @@ static Settings load_from_config(const fs::path& path) {
             for (char& c : v) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (v == "osci" || v == "oscilloscope") s.lyric_viz = 1;
             else if (v == "sphere") s.lyric_viz = 0;
+            else if (v == "spectro" || v == "spectrogram") s.lyric_viz = 2;
             continue; // anything unrecognized keeps the current value
         }
         if (key == "osci_stereo") continue; // retired setting: old configs may still contain it, it is ignored
@@ -1151,10 +1172,16 @@ static void write_settings(std::ostream& out, const Settings& s) {
     out << "ElimentQueue=" << tf(s.element_queue) << "\n";
     out << "ElimentWaveForm=" << tf(s.element_waveform) << "\n";
     out << "ElimentLyrics=" << tf(s.element_lyrics) << "\n";
-    out << "LyricViz=" << (s.lyric_viz == 1 ? "osci" : "sphere") << "\n";
-    out << "## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)\n";
+    out << "LyricViz=" << (s.lyric_viz == 1 ? "osci" : s.lyric_viz == 2 ? "spectro" : "sphere") << "\n";
+    out << "## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors) | spectro = the spectrogram\n";
     out << "## Pick it live from this tab's \"Lyric Viz\" row (replaces the old LyricsPlaceholderBall on/off).\n";
+    out << "UseLyrics=" << tf(s.use_lyrics) << "\n";
+    out << "UseOscilloscope=" << tf(s.use_osci) << "\n";
+    out << "UseSpectrogram=" << tf(s.use_spectro) << "\n";
+    out << "## false = left out of the lyrics area: not in the \".\" cycle (the sphere always is). The windows\n";
+    out << "## (SHIFT+8 spectrogram, SHIFT+9 oscilloscope) and the full screen (SHIFT+u) work either way.\n";
     osci_config_write(out, s);
+    spectro_config_write(out, s.spectro, "##");
     out << "## Tune all of these live with SHIFT+o in the main UI\n";
     out << "Visualizer=" << tf(s.element_visualizer) << "\n";
     out << "MetaDataOnly=" << tf(s.meta_only) << "\n";
