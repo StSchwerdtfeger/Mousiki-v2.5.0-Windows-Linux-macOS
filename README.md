@@ -130,13 +130,14 @@ Note, I had a bunch of the below already installed, so I am not sure how smooth 
 | Python 3 | runs the helper scripts in `scripts/`: fast online search (`fast_yt_search.py`), AcoustID fetch (`fetch_meta.py`) and lyrics (`fetch_lyrics.py`) — the first two use the standard library only | `winget install Python.Python.3.12` |
 | Python package `requests` | lyrics only (`fetch_lyrics.py` / `lrc.py`) | `py -3 -m pip install requests` (done by `setup.ps1`) |
 | `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
+| `SDL2.dll` (optional) | the scope and spectrogram windows (`)` / `(`: German `SHIFT+9` / `SHIFT+8`, English `SHIFT+0` / `SHIFT+9`); loaded at run time, so the build does not need it | **fetched by `setup.ps1`** next to `mousiki.exe` (or `SDL2.dll` from `SDL2-<version>-win32-x64.zip`, [SDL releases](https://github.com/libsdl-org/SDL/releases)) |
 | `sidplayfp` (optional) | Commodore 64 SID tunes (`.sid`); tracker modules (`.mod/.xm/.it/.s3m`…) and console music (`.nsf/.spc/.vgm`…) only need an FFmpeg built with libopenmpt / libgme, which the usual Windows builds are | from a [sidplayfp release](https://github.com/libsidplayfp/sidplayfp/releases), put on the `PATH` |
 
 All of the runtime tools (FFmpeg, yt-dlp, Python) are independent of each other and of the core player. With none of them installed, local playback of MP3/FLAC/WAV etc. still works (Opus/some other formats need FFmpeg); the radio mode cannot play anything without FFmpeg.  
 
 MinGW-w64 (MSYS2 UCRT64) also builds this — configure with `-G "MinGW Makefiles"`. The code guards on `_WIN32`, not on `_MSC_VER`, except where MSVC genuinely differs (noted inline where it matters).
 
-`third_party/` (miniaudio v0.11.25, kissfft, chromaprint 1.6.1 for the AcoustID meta data fetch, miniz 3.0.2 — MIT — which compresses the pictures of the oscilloscope's image style) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if one of them is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause, Chromaprint is MIT but — because it bundles some FFmpeg code — is to be treated as LGPL-2.1 as a whole (see `third_party/chromaprint/LICENSE.md` and the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included).
+`third_party/` (miniaudio v0.11.25, kissfft, chromaprint 1.6.1 for the AcoustID meta data fetch, miniz 3.0.2 — MIT — which compresses the pictures of the oscilloscope's image style) is vendored in this repo, so configuring and building needs no internet connection — `CMakeLists.txt` no longer downloads anything, it just stops with a clear error if one of them is missing. miniaudio is public domain / MIT-0, kissfft is BSD-3-Clause, Chromaprint is MIT but — because it bundles some FFmpeg code — is to be treated as LGPL-2.1 as a whole (see `third_party/chromaprint/LICENSE.md` and the headers in `third_party/`). To update either, replace the files in `third_party/` with a newer upstream copy (not tested if it is that ease now that chromaprint is also included). SDL2 (zlib licence, used by the optional scope window) is **not** vendored and not linked: Mousiki loads it at run time if it is installed (`setup.ps1` places the official `SDL2.dll` together with its `README-SDL.txt` next to `mousiki.exe`).
 
 ## Use Windows Terminal
 
@@ -218,6 +219,7 @@ The config file is created at `~/.config/mousiki/config.txt` (the `config.txt` i
 | Python 3 + `requests` | lyrics, fast online search, AcoustID fetch (`requests` is only needed for lyrics) | `python3`, `python3-requests` (or `pip install --user requests`) |
 | `xclip` / `wl-clipboard` (Linux, optional) | pasting into the search field; macOS uses the built-in `pbpaste` | `xclip` on X11, `wl-clipboard` on Wayland |
 | `fpcalc` (Chromaprint) | audio fingerprint for the AcoustID fetch | **nothing to install** — built by CMake from `third_party/chromaprint/` and copied to `scripts\` |
+| SDL2 (optional) | the scope and spectrogram windows (`)` / `(`: German `SHIFT+9` / `SHIFT+8`, English `SHIFT+0` / `SHIFT+9`); loaded at run time, so the build does not need it | `libsdl2-2.0-0` (apt), `SDL2` (dnf), `sdl2` (pacman / apk), `brew install sdl2` |
 | `sidplayfp` (optional) | Commodore 64 SID tunes (`.sid`); tracker modules and console music go through FFmpeg (libopenmpt / libgme, included in the distro builds) | `sidplayfp` (apt/dnf/pacman), `brew install sidplayfp` |
 
 Just like on Windows, FFmpeg, yt-dlp and Python are independent of each other and of the core player: without them, local playback of MP3/FLAC/WAV etc. still works (the radio mode needs FFmpeg). The radio is built into the same binary (sources in `src_radio/`), so there is nothing extra to build or run; like the player it has only been tested on Linux so far. If you prefer to install everything yourself, build manually:
@@ -253,13 +255,29 @@ IN GENERAL: See manual for a full detailed overview of the functionality of the 
 Rebindable in `C:\Users\USER\.config\mousiki\config.txt` or in Settings → Reference (`s`). Keys written as `SHIFT+x` are the **uppercase letter** (e.g. `HKeyCycleSortMode="T"`), because the plain lowercase letter already does something else. Some commands are fixed (not rebindable): `ESC`, `Y`/`N` in prompts, `SHIFT+B`, `SHIFT+↑/↓` in the overlays, and the keys inside the playlist and meta editors including `CTRL+S` (save) and `CTRL+SHIFT+X` (discard).
 See the **[user manual](Mousiki_User_Manual/Mousiki_User_Guide.md)** for every command in detail or use `?` for the cheat sheet inside the app (it always shows the keys you actually have bound).
 
+**Keyboard layouts.** Mousiki reacts to the character a key types. Letters, digits, arrows, `.` and `,` are the same everywhere; a few symbols are typed differently on a German and an English (US / UK) keyboard:
+
+| Character | Command | German keyboard | English keyboard |
+| :--- | :--- | :--- | :--- |
+| `*` | Switch player ↔ radio; karaoke: lyrics bigger | `SHIFT` and `+` | `SHIFT + 8` |
+| `_` | Karaoke: lyrics smaller | `SHIFT` and `-` | `SHIFT` and `-` |
+| `(` / `)` | Spectrogram window / scope window | `SHIFT + 8` / `SHIFT + 9` | `SHIFT + 9` / `SHIFT + 0` |
+| `+` | Volume up | `+` | `SHIFT` and `=` (the radio also takes `=`) |
+| `?` | Cheat sheet | `SHIFT` and `ß` | `SHIFT` and `/` |
+| `/` and `:` | Search and its prefixes (`/s:`, `/sc:`, `/b:`, `/p:`, `/f:`) | `SHIFT + 7`, `SHIFT` and `.` | `/`, `SHIFT` and `;` |
+| `#` | Shuffle next / random channel | `#` | US `SHIFT + 3`, UK `#` |
+| `<` `>` | Equalizer presets (also `,` / `.`) | `<` / `SHIFT` and `<` | `SHIFT` and `,` / `SHIFT` and `.` |
+| `[` `]` `{` `}` | Radio timeshift | `ALT GR + 8 / 9 / 7 / 0` | `[` `]` `SHIFT + [` `SHIFT + ]` |
+
+The cheat sheets name the switch key and the window keys for the layout Mousiki detects (`MOUSIKI_KEYBOARD=us\|gb\|de\|…` overrides it); every rebindable key can be moved under Settings → REFERENCE.
+
 Note that macOS uses the Option key or Ctrl as substitute for ALT! When installing on macOS all key command legends and the cheat sheet should be adjusted accordingly. 
 
 ### System
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
-| **Switch Player ↔ Radio** | `SHIFT + +` | Switch to the radio mode (and back from there). It types the `*` character, so on a German keyboard it is `SHIFT` and `+`; the cheat sheet shows the combination that fits your keyboard layout (detected automatically, `MOUSIKI_KEYBOARD=us\|de\|fr\|…` overrides it). The player is paused and waits in the background, the radio is closed completely when you leave it. Fixed key, not rebindable; `SHIFT + m` stays the meta data editor. `+` on its own is volume up |
-| **Cheat Sheet** | `?` | List of all key commands (on German keyboards it is `SHIFT + ß`) |
+| **Switch Player ↔ Radio** | `*` | Switch to the radio mode (and back from there). The key that types `*`: `SHIFT` and `+` on a German keyboard, `SHIFT+8` on an English (US / UK) one; the cheat sheet shows the combination that fits your keyboard layout (detected automatically, `MOUSIKI_KEYBOARD=us\|de\|fr\|…` overrides it). The player is paused and waits in the background, the radio is closed completely when you leave it. Fixed key, not rebindable; `SHIFT + m` stays the meta data editor. `+` on its own is volume up |
+| **Cheat Sheet** | `?` | List of all key commands (German keyboard: `SHIFT` and `ß`, English: `SHIFT` and `/`) |
 | **Settings** | `s` | Open Settings; inside Settings `s` again saves to `config.txt` and returns |
 | **Exit Settings** | `ESC` / `q` | Discard & close: changes made on the screen are reverted; while there are unsaved changes a green ``Unsaved changes! Save with `s` or discard with `ESC`.`` note is shown. While a field (colour, path, value, key) is being edited, `←/→` move the caret and `TAB` stays in the field; only `ENTER` (apply) or `ESC` (cancel) leave it |
 | **Console / Logs** | `t` | Show console logs for debugging |
@@ -290,24 +308,31 @@ Note that macOS uses the Option key or Ctrl as substitute for ALT! When installi
 | **Clear Filter** | `c` | Reset the folder filter |
 | **Cycle Sort Mode** | `SHIFT + t` | folder order → title A-Z → artist A-Z |
 | **Filename / Meta Data** | `SHIFT + n` | Toggle between filename + meta data and meta data only in lists |
-| **Cycle Lyrics View** | `.` | Cycle the lyrics area: lyrics → sphere → oscilloscope (until v3.0.0: `+`) |
+| **Cycle Lyrics View** | `.` | Cycle the lyrics area: lyrics → sphere → oscilloscope → spectrogram, skipping what Settings → ON/OFF switches off (Use Lyrics / Oscilloscope / Spectrogram) (until v3.0.0: `+`) |
+| **Spectrogram options** | `SHIFT + i` | Overlay for the spectrogram: style (braille / image), motion (sweep / scroll), scale (linear / log / mel / bark / erb / period), min / max frequency, gain, range, frequency gain, window size, zero padding, colors (Audacity's Roseus, classic on black, grayscale, gradient = the VIZ colours), channels, time span 5–60 s in steps of 5, labels (`R` = Audacity's defaults) |
+| **Spectrogram full screen** | `SHIFT + u` | The spectrogram over the whole screen with frequency labels and a time ruler (`ESC` closes) |
 | **Retry Lyrics** | `l` | Form to fetch lyrics again with a manual title/artist (only while the lyrics engine is on) |
 | **Waveform style** | `w` | Toggle waveform raw / smooth |
 | **Refresh UI** | `r` | Force a full redraw (e.g. after a terminal resize); until v3.0.0 this was `k` |
-| **Karaoke overlay** | `k` | The lyrics of the playing track over the whole screen, centred between two karaoke pictures in the disk colours with a moving colour wave; the sung words highlighted; `SHIFT` and `+` / `SHIFT` and `-` change the lyrics size 1-5 (big sizes drawn with a built-in pixel font); the layout follows terminal resizes; playback keys keep working, `ESC` or `k` closes |
+| **Karaoke overlay** | `k` | The lyrics of the playing track over the whole screen, centred between two karaoke pictures in the disk colours with a moving colour wave; the sung words highlighted; `*` / `_` change the lyrics size 1-5 (German `SHIFT` and `+` / `-`, English `SHIFT+8` / `SHIFT` and `-`) (big sizes drawn with a built-in pixel font); the layout follows terminal resizes; playback keys keep working, `ESC` or `k` closes |
 | **Track list overlay** | `SHIFT + l` | Enlarged overlay of the track list pane; `SHIFT + ↑/↓` pages, `ESC` closes |
 | **Queue list overlay** | `SHIFT + k` | Enlarged overlay of the queue pane (same paging, `ESC` closes) |
-| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope live: display (sphere / osci), style (braille / image), frame rate, decay, dot threshold, tail, line interpolation, Z axis, trace length, 45° rotation, mono phase portrait, colour palette, glow (image style) and image protocol. Each style keeps its own values (`R` resets the style in use, saved on close) |
+| **Spectrogram window** | `(` (German `SHIFT + 8`, English `SHIFT + 9`) | The spectrogram in its own window, drawn by the graphics card and scrolling perfectly smoothly at the monitor's refresh rate (same options as `SHIFT+i`, frequency labels). Same keys in the window as the scope window (`ESC`, `Q` or the key of `(` close). Works always, also with the spectrogram switched off. Needs SDL2. |
+| **Scope window** | `)` (German `SHIFT + 9`, English `SHIFT + 0`) | (was `SHIFT+w`) The oscilloscope in its own window, drawn by the graphics card at the monitor's refresh rate (every sample, phosphor afterglow, bloom). Keys in the window: `F` / `F11` / double-click fullscreen, `T` always on top, `ESC` close. Needs SDL2 (see Prerequisites) |
+| **Oscilloscope tuning** | `SHIFT + o` | Overlay to tune the oscilloscope live: osci music mode, style (braille / image), frame rate (30 – 165), decay, dot threshold, tail, line interpolation, Z axis, trace length, 45° rotation, mono phase portrait, colour palette, glow (image style), image protocol and image resolution (full / half / third: the picture is drawn smaller and enlarged by the terminal or the Sixel encoder, for a smooth image scope at high frame rates). Each style keeps its own values, frame rate and music mode included (`R` resets the style in use, saved on close) |
 | **Normalization tuning** | `SHIFT + v` | Overlay to adjust the loudness normalization parameters |
 | **Lyrics timing** | `ALT + l` | Overlay to shift the lyrics of the playing track earlier / later (`←`/`→` ±0.1 s, `↑`/`↓` ±0.5 s, `R` reset, `ENTER` saves the offset into the track's `.lrc`, `ESC` cancels). |
-| **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 13 presets. | 
+| **Equalizer** | `SHIFT + e` | Open Equalizer overlay menu, includes a 10 band EQ with 12 presets (plus your own custom presets). | 
 | **Sleep timer** | `SHIFT + z` | Small overlay: pause playback after 15 / 30 / 60 / 90 / 120 minutes, or stop after the current song (or switch it off). **Fade out** (on/off, `SleepFade` in config.txt) lowers the volume over the last 10 % of the time (30 s to 10 min). Independent of the Stop play mode |
 
 ### Search
 | Action | Keybinding | Description |
 | :--- | :--- | :--- |
 | **Local Search** | `/` | Filter and search local library (fuzzy, live as you type) |
-| **Online Stream Search** | `/s: <query>` | Search and stream music online (runs on `Enter`) |
+| **Online Stream Search** | `/s: <query>` | Search and stream music online from YouTube (runs on `Enter`) |
+| **SoundCloud Search** | `/sc: <query>` | Search, stream and download (download key) from SoundCloud via yt-dlp; the audio is kept as SoundCloud sends it; 30-second previews (Go+ tracks) are filtered out |
+| **Bandcamp Search** | `/b: <query>` | Search Bandcamp tracks (`scripts/bandcamp_search.py`), stream and download them via yt-dlp (Bandcamp's free 128k stream) |
+| **Play from the search** | `↑/↓` then `Enter` | Moving through the results while typing and pressing `Enter` plays the highlighted track at once (the radio highlights the station under the cursor while searching, `Enter` tunes it) |
 | **Search Playlists** | `/p: <query>` | Search saved playlists; `Enter` on a playlist queues all of its tracks |
 | **Search Folders by Name** | `/f: <query>` | Search folder; hit `Enter` to open content in local audio pane (similar using `f`) |
 
@@ -332,7 +357,7 @@ Note that macOS uses the Option key or Ctrl as substitute for ALT! When installi
 | **Open Meta Data Editor** | `SHIFT + m` | Open Meta Data Editor (see the editor keys below) |
 | **Fetch meta data (AcoustID)** | `SHIFT + b` | Fingerprint lookup of the hovered local title (fixed key, also works from the main list) |
 | **Listening History** | `SHIFT + h` | Open the history overlay; `←/→` or `1` / `2` / `3` switch tabs (`TAB` never does), `r` re-sorts; on Top Tracks `TAB` moves into **ADD SMART HISTORY TO QUEUE**: 16 lists (top 10/25/50/100, top 25 of the week / month / quarter / year, top 25 by time of day, last 25 newly added, least played), arrows pick, `Enter` queues, `ESC` leaves the pane |
-| **Download Stream** | `y` | Download currently streaming track to the download folder (Settings → Download Folder, default `.cache\mousiki`) |
+| **Download Stream** | `y` | Save the currently streaming track (YouTube, SoundCloud or Bandcamp) to the download folder (Settings → PATHS → DOWNLOAD PATH, default `.cache/mousiki`), in the format the site delivered |
 
 Keys inside the **playlist editor**: `e` on the Saved Playlists tab exports the selected playlist as M3U8 (default) or M3U (overlay with folder and format; the default folder is Settings → PATHS → PLAYLIST EXPORT PATH), `←/→` switch tab (in a text box only until you type something there, then they move the caret; `ESC` leaves the box again), `ALT+←/→` switch tab from anywhere, `TAB` cycle focus, `Enter` add track / load playlist, `4`/`5` move track, `D`/`DEL`/`BACKSPACE` remove track (delete playlist on the Saved tab), `CTRL+S` save playlist, `SHIFT+←/→` mark text, `CTRL+C/X/V` copy/cut/paste, `ESC` leave the text box / close (asks to save unsaved changes).
 
@@ -367,21 +392,23 @@ All of them can also be found in the in-app cheat sheet (`?`, categorized, scrol
 | Reconnect | `R` (capital, because `r` is a preset key) |
 | Stop | `x` |
 | Sort stations (list order ↔ name A-Z) | `SHIFT + t` |
-| Switch scope block oscilloscope ↔ sphere | `.` (rebindable; same key as the lyrics-area cycle in the player; was `o` up to v3.0.0) |
+| Spectrogram options / full screen | `SHIFT + i` / `SHIFT + u` |
+| Cycle scope block oscilloscope → sphere → spectrogram (skips what ON/OFF → Use oscilloscope / spectrogram switch off) | `.` (rebindable; same key as the lyrics-area cycle in the player; was `o` up to v3.0.0) |
 | Loudness normalization / its overlay | `v` / `SHIFT + v` |
 | Equalizer overlay | `SHIFT + e` (the preset key `e` is the lowercase letter, so there is no conflict) |
 | Oscilloscope overlay | `SHIFT + o` |
+| Scope window / spectrogram window (in their own windows) | `)` / `(` (German `SHIFT + 9` / `SHIFT + 8`, English `SHIFT + 0` / `SHIFT + 9`) |
 | Sleep timer | `SHIFT + z` |
 | Pause / resume (timeshift; the stream keeps buffering) | `SPACE` |
-| Jump back / forward 30 s | `[` / `]` (shown for 4 s at the bottom of the scope block) |
-| Jump back 5 min / back to live | `{` / `}` |
+| Jump back / forward 30 s | `[` / `]` (German keyboard: `ALT GR + 8` / `ALT GR + 9`; shown for 4 s at the bottom of the scope block) |
+| Jump back 5 min / back to live | `{` / `}` (German keyboard: `ALT GR + 7` / `ALT GR + 0`; English: `SHIFT + [` / `SHIFT + ]`) |
 | Record (RECORD overlay: from now on, the last 1/5/10/15/30 min or everything buffered; `y` again stops) | `y` |
 | PRESETS menu / RADIO BROWSER / STATION LISTS | `SHIFT + k` / `SHIFT + s` / `SHIFT + p` |
 | Listening history | `h` |
 | Big STATIONS overlay | `SHIFT + l` (shown as `L`) |
 | Settings | `s` |
 | Cheat sheet | `?` |
-| Switch to the music player | `SHIFT + +` (the `*` character) |
+| Switch to the music player | `*` (German `SHIFT` and `+`, English `SHIFT+8`) |
 | Quit | `q` or `CTRL + c` |
 
 ### Text fields
@@ -543,9 +570,14 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 - **Port on linux/macOS** I adjusted the code so the current v2.5.0 also runs on the initial platforms again. I haven't tested this yet and there might be adjustments in the future. Note that macOS has no ALT key. When installing on macOS all cheat sheet and command legends will be adjusted accordingly.
 - **Setup/portable (x64)** included in the latest release (since v2.1.0 for Win and since v2.5.0 also for Linux/macOS) as an alternative to building the app yourself. Setup size for windows is currently ~80MB and results in a ~250MB build (might optimize in the future), the portable .zip has ~100MB.
-- **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`. Besides the braille style there is an **image style** (Osci style: image): a real pixel picture with glow, drawn by the terminal itself via the Kitty graphics protocol (Kitty, WezTerm, Ghostty, Konsole …) or Sixel (Windows Terminal 1.22+, foot, xterm …); without either the braille scope stays. `MOUSIKI_GFX=kitty|sixel|off` forces a protocol, `MOUSIKI_CELLPX=10x20` the cell size (otherwise asked from the terminal). Frame rate 30 / 45 / 60 / 90.
+- **YX mode oscilloscope** as alternative to the lyrics ball. Parameters such as decay can be changed in an overlay menu via `SHIFT+o`. Besides the braille style there is an **image style** (Osci style: image): a real pixel picture with glow, drawn by the terminal itself via the Kitty graphics protocol (Kitty, WezTerm, Ghostty, Konsole …) or Sixel (Windows Terminal 1.22+, foot, xterm …); without either the braille scope stays. `MOUSIKI_GFX=kitty|sixel|off` forces a protocol, `MOUSIKI_CELLPX=10x20` the cell size (otherwise asked from the terminal). Frame rate 30 / 45 / 60 / 90 / 120 / 165 (only the screen lines that changed are sent, so the high rates stay within what a terminal can take). **Osci music mode** (`SHIFT+o`) for oscilloscope music: the scopes get the decoded signal before EQ / normalization / limiter / volume, at a fixed scale and without the phase portrait; the scope window adds finer beam and stronger interpolation. The Sixel encoder is written for speed (about 13x faster than before: one pass per 6-row band, only the colours that occur, run-length coded), a picture is only sent when there is a new one (the text frame moves the cursor over its cells instead of overwriting them), and **Image resolution** (full / half / third, default half) draws the picture smaller and lets Kitty / the Sixel encoder enlarge it (in Windows Terminal via the Sixel pixel aspect ratio), so high frame rates stay smooth. The oscilloscope can also be open in an extra window showing it in the screens currently set Hz.
 
 <p align="center"><img width="849" height="400" alt="image" src="https://github.com/user-attachments/assets/a25d8ef3-fa17-4a6b-a7c5-28d214778e03" /></p>
+
+- **Spectrogram** (player: lyrics area via `.`; radio: scope block). Made like Audacity's spectrogram view with Audacity's defaults: 2048 Hann window (scaled to 0 dB for a full-scale sine), zero padding 2, Mel scale 0–20 000 Hz, gain 20 / range 80 dB, strongest bin per pixel row, the Roseus colour map, stereo as two stacked channels; from the decoded signal (volume / EQ independent). Image style (Kitty / Sixel, sent as tiles: in *sweep* motion only the strip being written) or braille. `SHIFT+i` options (all of Audacity's scales, frequencies, gain, range, frequency gain, window size and zero padding (recomputed at once from the last minute of audio), colours roseus / classic on black / grayscale / gradient, channels, time span 5–60 s in steps of 5), `SHIFT+u` full screen with frequency labels and time ruler.
+- **Spectrogram scroll in Windows Terminal.** With Sixel in Windows Terminal, *scroll* lets the terminal shift the picture by one cell and sends only the newest cell column: ~60 KB/s instead of ~2 MB/s for a full screen, so it no longer arrives in chunks. Steps are one cell wide; a shorter time span makes it more fluid. It uses DECCRA (copy rectangular area), which Windows Terminal applies to Sixel pictures; `MOUSIKI_SIXEL_SHIFT=0/1` overrides it. Can be shown in a big overlay and via in an extra winodw. 
+
+p align="center"><img width="2296" height="1087" alt="grafik" src="https://github.com/user-attachments/assets/20ada763-aa8a-4cdb-814f-6aee5bbcd7d8" /></p>
 
 - **Settings → REFERENCE**: the *Reset all keys* line sits at the top under the cheat-sheet note, `CTRL+SHIFT+U` undoes the last 5 key changes. Keys are shown as `SHIFT+t` (not `T`); the cheat sheet aligns its description column to the longest key and wraps descriptions at 120 columns.
 - **COLORS tab** has a `TAB_NAMES` row (current / other tab name, `ColorTabCurrent` / `ColorTabOther`) like the radio; the playlist editor's name field (25 characters) sits in the tab strip.
@@ -560,7 +592,7 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 
 <p align="center"><img width="848" height="397" alt="grafik" src="https://github.com/user-attachments/assets/05c23222-efb6-44be-b74b-3e47803df2d1" /></p>
 
-- **10 band EQ** overlay with 13 presets which can be opend in the main playback UI via `SHIFT+e`. Custom presets can be created, saved and deleted. Built in presets can't be deleted. 
+- **10 band EQ** overlay with 12 presets which can be opend in the main playback UI via `SHIFT+e`. Custom presets can be created, saved and deleted. Built in presets can't be deleted. 
 
 <p align="center"><img width="848" height="399" alt="grafik" src="https://github.com/user-attachments/assets/534f4f2c-2d3e-4a35-a99c-e8cd78861dcd" /></p>
 
@@ -642,6 +674,16 @@ Below is a list of major and minor addition on top of the original v1.0. The des
 - **Metadata-only / filename list rows** — `SHIFT+N` (or Settings → ON/OFF → **"Show meta data only"**) swaps every (search-)list row between the long-standing *filename + metadata* presentation and *metadata only*, i.e. the embedded title tag instead of the filename stem. Untagged files (and rows whose tags haven't been probed yet) keep their filename, so an untagged library never turns into a blank list. Applies to the main list, its search results, and both lists in the playlist editor. Also applies to the field between the disk animation and lyrics/sphere. Rebindable like every other hotkey (`HKeyToggleMetaOnly`; use `g` instead if you'd rather not rely on Shift).
 - **Scrollable settings panel** —  REFERENCE now scroll with the cursor instead of growing past the panel, so the tab stays usable on a short terminal (32 rows and below).
 - **Fast online search.** `scripts/fast_yt_search.py` hits YouTube's internal search endpoint directly instead of shelling out to `yt-dlp` for every keystroke-triggered search — `yt-dlp` is a general-purpose extractor for hundreds of sites and pays for that generality in startup time. `yt-dlp`'s own search is the fallback whenever the fast path comes back empty for any reason (script missing, network hiccup, or a genuine zero-result query), so nothing regresses if the fast path is ever unavailable. It approximates `yt-dlp`'s old `duration >= 90s` result filter (dropping shorts and live streams) but can't replicate the `categories *= 'Music'` half without a second request per result, which would defeat the point.
+- **Long tracks need little memory.** A track whose decoded audio would take more than about 190 MB (an hour of 48 kHz stereo is 1.4 GB as 32-bit float) is held as a 2-minute window around the playing position instead of whole: the decoder stays ahead of playback and keeps 30 s behind it, a seek outside the window decodes from the new position (MP3 with a seek table, WAV/FLAC directly, FFmpeg formats with a fast `-ss` seek), and loudness and waveform come from a separate pass that keeps only the figures. Same samples, same rate, no quality loss -- a 200 MB file now takes ~50 MB instead of gigabytes. The 48 kHz limit for files over 20 minutes is gone.
+- **Sound quality.** Files play at their own sample rate (up to 96 kHz) instead of everything being converted to 44.1 kHz with a linear converter; unavoidable conversions (files above 96 kHz, internet radio to 48 kHz, a device that cannot take the rate) use long, sharp filters (FFmpeg `aresample` with 64 taps, miniaudio's steepest low-pass).
+- **SoundCloud (`/sc:`) and Bandcamp (`/b:`)** next to YouTube (`/s:`): search, play, queue and download, through yt-dlp (Bandcamp's search by `scripts/bandcamp_search.py`, as yt-dlp has none). Their tracks are kept in their own format (no second lossy conversion); SoundCloud's 30-second preview-only tracks are filtered out of the results.
+- **Per-style oscilloscope settings:** the braille and the image scope keep everything separately, frame rate and osci music mode included (`OsciFrameRate` / `OsciImageFrameRate`, `OsciMusicMode` / `OsciImageMusicMode`; an old `FrameRate` is taken over for both).
+- **Default visual:** the spectrogram in the image style (Lyric Viz = spectro; radio: OsciSphere = spectro). The oscilloscope and spectrogram overlays no longer have a *Display* row (`.` switches the visual).
+- **Lyrics messages** ("fetching lyrics ...", "No synchronized lyrics found") are a small box over the bottom of the lyrics-area visual, which keeps its size (the spectrogram no longer jumps).
+- **Search:** `↑/↓` while typing then `Enter` plays the highlighted track directly; the radio highlights the station under the cursor while searching. `SHIFT+u` (full-screen spectrogram) works whatever **Use Spectrogram** says -- that switch only concerns the field in the main screen.
+
+- **Settings → ON/OFF: Use Lyrics / Use Oscilloscope / Use Spectrogram** (radio: Use oscilloscope / Use spectrogram): takes a visual out of the main screen's lyrics area / scope block, so `.` only cycles through the rest (e.g. just lyrics and sphere); the sphere is always there. The full screen (`SHIFT+u`) and the windows (`(` / `)`) always work. `UseLyrics=`, `UseOscilloscope=`, `UseSpectrogram=` in the config files.
+- **Scope window** (`)`: German `SHIFT+9`, English `SHIFT+0`; was `SHIFT+w`; player and radio). The oscilloscope in its own window, drawn by the graphics card (SDL2, loaded at run time; zlib licence) like an analog scope: every sample is drawn once as a soft beam with phosphor afterglow and bloom, at the monitor's refresh rate, with automatic brightness. It follows the image style's settings (decay, glow, palette, Z axis, rotation, mono phase portrait), shows the track / station as its title, remembers position, size, fullscreen (`F`) and always-on-top (`T`), and stays open across the player / radio switch. It runs as a second process (`mousiki --scope-window`) fed through a pipe, so neither a driver problem nor dragging the window can stall the music or the terminal.
 - **Tracker modules and chiptunes.** MOD / XM / IT / S3M and 20+ other tracker formats (via FFmpeg's libopenmpt), NES / SNES / Game Boy / Sega console music (`.nsf`, `.spc`, `.gbs`, `.vgm` … via FFmpeg's libgme) and C64 SID tunes (via the external `sidplayfp`, rendered once to a cached WAV; length `SidPlayLength` in `config.txt`, default 180 s) play like any other file, with the module title / SID name, author and year as metadata. Nothing is linked into Mousiki, so the licences of these libraries stay separate.
 - **Radio timeshift.** The radio keeps the last 5–60 minutes (Settings → ON/OFF → *Timeshift buffer*, default 30) of the tuned station in a rolling buffer on disk (~11.5 MB per minute, in `~/.cache/mousiki/`, deleted on exit): `SPACE` pauses live radio, `[` / `]` jump 30 s, `{` 5 min back, `}` returns to live; the jump is shown in the scope block for 4 s and the dial shows `PAUSED` / `TIMESHIFT -m:ss`. `y` opens a RECORD overlay that freezes the moment it was pressed and can start the recording up to 30 minutes in the past ("save the last 5 minutes"). The buffer is written by the stream thread only, so the interface does not slow down.
 
