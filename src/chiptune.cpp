@@ -74,7 +74,8 @@ bool render_sid_to_wav(const fs::path& sid, int seconds, fs::path& out_wav, std:
     fs::create_directories(dir, ec);
     // Cache key: the file's path, size and modification time plus the length -- a changed file or length renders anew.
     const auto size = fs::file_size(sid, ec);
-    const auto mtime = fs::last_write_time(sid, ec).time_since_epoch().count();
+    // long long on purpose: macOS' libc++ counts file times in __int128, which std::to_string does not take.
+    const long long mtime = static_cast<long long>(fs::last_write_time(sid, ec).time_since_epoch().count());
     const std::string key = path_utf8(sid) + "|" + std::to_string(size) + "|" + std::to_string(mtime) + "|" + std::to_string(seconds);
     const std::string name = path_utf8(sid.stem()) + "_" + std::to_string(std::hash<std::string>{}(key) % 100000000ULL) + ".wav";
     out_wav = dir / path_from_utf8(name);
