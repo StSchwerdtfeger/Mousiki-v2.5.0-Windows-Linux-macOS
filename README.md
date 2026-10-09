@@ -1,6 +1,6 @@
 <div align="center">
     
-# 📻 Mousiki v3.1.0 - Music and Radio Player 🎵 
+# 📻 Mousiki Plus v3.1.0 - Music and Radio Player 🎵 
 (Windows · Linux · macOS)  
 
 <p align="center">
