@@ -147,7 +147,7 @@ The entire UI is ANSI escape sequences. `mousiki.exe` enables `ENABLE_VIRTUAL_TE
 
 `$HOME` doesn't exist on Windows, and the original codebase looks it up in seven different places to find its directories. Rather than rewrite all seven call sites to be platform-aware, this port points `HOME` at `%USERPROFILE%` for its own process at startup, so every one of those paths resolves exactly the way it does on Linux/macOS:
 
-|| | Path |
+| | Path |
 |---|---|
 | Config | `%USERPROFILE%\.config\mousiki\config.txt` |
 | Cache (downloaded/streamed tracks) | `%USERPROFILE%\.cache\mousiki\` |
