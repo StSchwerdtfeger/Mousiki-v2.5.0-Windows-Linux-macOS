@@ -61,8 +61,14 @@ ElimentDummyButtons=true
 ElimentQueue=true
 ElimentWaveForm=true
 ElimentLyrics=true
-## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors)
+LyricViz=spectro
+## sphere = the audio-reactive ball | osci = the oscilloscope (both drawn in the VIZ colors) | spectro = the spectrogram (default)
 ## Pick it live from this tab's "Lyric Viz" row (replaces the old LyricsPlaceholderBall on/off).
+UseLyrics=true
+UseOscilloscope=true
+UseSpectrogram=true
+## false = left out entirely: not in the "." cycle of the lyrics area (the sphere always is). The windows
+## (SHIFT+8 spectrogram, SHIFT+9 oscilloscope) work either way.
 OsciDecay=0.8
 ## afterglow, 0.00 to 0.99 (higher = longer trails)
 OsciDotThreshold=0.28
@@ -155,20 +161,17 @@ ConsoleVerbosity=basic
 ##             AUTOSAVE / SESSION SNAPSHOT
 ##-------------------------------------------
  
-SleepFade=true
-## sleep timer: fade the volume out over the last 10 % of the time (30 s .. 10 min), then pause
-SidPlayLength=180
-## SID tunes (C64) are rendered by sidplayfp for this many seconds (10 .. 1800)
-KaraokeLyricsSize=2
-## karaoke overlay (k): lyrics size 1 (normal text) .. 5, SHIFT and + / SHIFT and - change it there
 AutoSave=true
-## resume exact song/position/queue/repeat/shuffle next launch
+## resumes the exact song/position/queue/repeat/shuffle next launch.
+## Snapshot file (Windows): %USERPROFILE%\.cache\mousiki\snapshot\snapshot.json
 AutoSaveIndicator=true
 AutoSaveDelayInSec=30
 AutoSaveChr=•
-## exactly one character is used, even if you paste more
+## only the first character is used, even if you paste more than one
 AutoSaveIndicatorType=blink
 ## blink , color
+## blink = the indicator character appears/disappears twice each time a save happens
+## color = the indicator stays visible and pulses AutoSaveC1 -> AutoSaveC2 -> AutoSaveC1 (heartbeat) each save
 AutoSaveC1=
 AutoSaveC2=
  
@@ -290,6 +293,8 @@ HKeyQueueMoveTop="$"
 HKeyQueueMoveBottom="%"
 HKeySearchFolder="/f:"
 HKeyOscMenu="O"
+HKeyScopeWindow=")"
+HKeySpectroWindow="("
 HKeyNormMenu="V"
 HKeyListOverlay="L"
 HKeyQueueOverlay="K"
@@ -299,6 +304,7 @@ HKeyToggleMute="x"
 HKeyToggleWaveform="w"
 HKeyEqualizer="E"
 HKeySleepTimer="Z"
+
  
 ##-------------------------------------------
 ##             PANEL 5: ABOUT APP
